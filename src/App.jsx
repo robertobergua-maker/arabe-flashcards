@@ -49,6 +49,24 @@ export default function App() {
     }
   }
 
+  // --- GESTIÓN DEL MODO ADMIN CON CONTRASEÑA ---
+  const handleAdminToggle = () => {
+    if (isAdminMode) {
+      // Si ya está en modo admin, salir directamente
+      setIsAdminMode(false);
+    } else {
+      // Si quiere entrar, pedir contraseña
+      const password = prompt("🔒 Introduce la contraseña de administrador:");
+      
+      // CAMBIA EL "1234" DE ABAJO POR TU CONTRASEÑA PREFERIDA
+      if (password === "1234") { 
+        setIsAdminMode(true);
+      } else if (password !== null) {
+        alert("⛔ Contraseña incorrecta");
+      }
+    }
+  };
+
   // --- FUNCIONES CRUD ---
   const handleSaveCard = async (cardData) => {
     try {
@@ -179,7 +197,7 @@ export default function App() {
             </div>
 
             <button 
-              onClick={() => setIsAdminMode(!isAdminMode)}
+              onClick={handleAdminToggle}
               className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-black/20 hover:bg-black/30 text-white/70'}`}
               title={isAdminMode ? "Salir de modo edición" : "Entrar en modo edición"}
             >
