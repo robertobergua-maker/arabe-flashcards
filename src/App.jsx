@@ -1,0 +1,581 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { supabase } from './supabaseClient';
+import OpenAI from 'openai';
+import { 
+  Search, Volume2, BookOpen, Mic, Upload, X, CheckCircle, 
+  AlertCircle, Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
+  Wand2, Image as ImageIcon, FileText, Loader2
+} from 'lucide-react';
+
+// UTILIDAD: QUITAR DIACRÍTICOS
+const removeDiacritics = (text) => {
+  if (!text) return "";
+  return text.replace(/[\u064B-\u065F\u0670]/g, '');
+};
+
+export default function App() {
+  const [cards, setCards] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("Todos");
+  const [frontLanguage, setFrontLanguage] = useState("spanish");
+  const [showDiacritics, setShowDiacritics] = useState(true);
+  
+  // ESTADOS ADMIN / MODALES
+  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [editingCard, setEditingCard] = useState(null); 
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
+
+  // --- CARGAR DATOS ---
+  useEffect(() => {
+    fetchCards();
+  }, []);
+
+  async function fetchCards() {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('flashcards')
+        .select('*')
+        .order('id', { ascending: false });
+
+      if (error) throw error;
+      setCards(data);
+    } catch (error) {
+      console.error("Error cargando tarjetas:", error.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // --- FUNCIONES CRUD ---
+  const handleSaveCard = async (cardData) => {
+    try {
+      if (cardData.id) {
+        // EDITAR
+        const { error } = await supabase
+          .from('flashcards')
+          .update({
+            category: cardData.category,
+            spanish: cardData.spanish,
+            arabic: cardData.arabic,
+            phonetic: cardData.phonetic
+          })
+          .eq('id', cardData.id);
+        if (error) throw error;
+        setCards(cards.map(c => c.id === cardData.id ? cardData : c));
+      } else {
+        // CREAR
+        const { id, ...newCardData } = cardData;
+        const { data, error } = await supabase
+          .from('flashcards')
+          .insert([newCardData])
+          .select();
+        if (error) throw error;
+        if (data) setCards([data[0], ...cards]);
+      }
+      setIsFormOpen(false);
+      setEditingCard(null);
+    } catch (error) {
+      alert("Error al guardar: " + error.message);
+    }
+  };
+
+  const handleBulkImport = async (newCards) => {
+    try {
+      // Limpiamos los IDs temporales antes de enviar a Supabase
+      const cleanCards = newCards.map(({ id, ...rest }) => rest);
+      
+      const { data, error } = await supabase
+        .from('flashcards')
+        .insert(cleanCards)
+        .select();
+
+      if (error) throw error;
+      if (data) {
+        setCards([...data, ...cards]);
+        alert(`¡${data.length} tarjetas importadas con éxito!`);
+        setIsSmartImportOpen(false);
+      }
+    } catch (error) {
+      alert("Error importando: " + error.message);
+    }
+  };
+
+  const handleDeleteCard = async (id) => {
+    if (!window.confirm("¿Seguro que quieres borrar esta tarjeta?")) return;
+    try {
+      const { error } = await supabase.from('flashcards').delete().eq('id', id);
+      if (error) throw error;
+      setCards(cards.filter(c => c.id !== id));
+    } catch (error) {
+      alert("Error al borrar: " + error.message);
+    }
+  };
+
+  // --- MODALES ---
+  const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
+  const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
+
+  // --- FILTROS ---
+  const categories = useMemo(() => {
+    const cats = new Set(cards.map(c => c.category).filter(Boolean));
+    return ["Todos", ...Array.from(cats).sort()];
+  }, [cards]);
+
+  const filteredCards = useMemo(() => {
+    return cards.filter(card => {
+      const s = (card.spanish || "").toLowerCase();
+      const a = removeDiacritics(card.arabic || "");
+      const term = searchTerm.toLowerCase();
+      const matchesSearch = s.includes(term) || a.includes(term);
+      const matchesCategory = selectedCategory === "Todos" || card.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [cards, searchTerm, selectedCategory]);
+
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
+      {/* HEADER */}
+      <header className={`text-white shadow-md z-20 sticky top-0 transition-colors ${isAdminMode ? 'bg-slate-800' : 'bg-emerald-700'}`}>
+        <div className="w-full px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex items-center gap-3">
+            <BookOpen className="w-7 h-7" />
+            <h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Aprende Árabe"}</h1>
+          </div>
+          
+          <div className="flex-1 w-full max-w-4xl flex flex-col md:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-2.5 w-4 h-4 text-white/50" />
+              <input 
+                type="text"
+                placeholder="Buscar palabra..."
+                className="w-full pl-9 pr-4 py-2 bg-black/20 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 placeholder-white/50 text-sm text-white"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+
+            <div className="relative md:w-64">
+                <Filter className="absolute left-3 top-2.5 w-4 h-4 text-white/50 pointer-events-none" />
+                <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 text-sm text-white appearance-none cursor-pointer"
+                >
+                    {categories.map(cat => (
+                        <option key={cat} value={cat} className="text-slate-800 bg-white">{cat}</option>
+                    ))}
+                </select>
+            </div>
+
+            <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
+                <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
+                <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
+                <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>
+                    <Type className="w-3.5 h-3.5" />
+                </button>
+            </div>
+
+            <button 
+              onClick={() => setIsAdminMode(!isAdminMode)}
+              className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-black/20 hover:bg-black/30 text-white/70'}`}
+              title={isAdminMode ? "Salir de modo edición" : "Entrar en modo edición"}
+            >
+              {isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* BODY */}
+      <div className="flex-1 overflow-y-auto bg-slate-100 p-4 md:p-8">
+          <div className="max-w-6xl mx-auto">
+            {/* BARRA DE HERRAMIENTAS ADMIN */}
+            {isAdminMode && (
+              <div className="mb-6 flex flex-wrap justify-center gap-4 animate-fade-in-up">
+                <button 
+                  onClick={openNewCardModal}
+                  className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-full shadow-lg hover:bg-emerald-700 hover:scale-105 transition-all font-bold"
+                >
+                  <Plus className="w-5 h-5" /> Añadir Manual
+                </button>
+                <button 
+                  onClick={() => setIsSmartImportOpen(true)}
+                  className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg hover:bg-purple-700 hover:scale-105 transition-all font-bold"
+                >
+                  <Wand2 className="w-5 h-5" /> Importar con IA (Listas/Fotos)
+                </button>
+              </div>
+            )}
+
+            {loading ? (
+               <div className="text-center py-20 text-slate-400 animate-pulse">Cargando...</div>
+            ) : filteredCards.length === 0 ? (
+              <div className="text-center py-20 text-slate-400">No hay tarjetas.</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                {filteredCards.map(card => (
+                  <Flashcard 
+                    key={card.id} 
+                    data={card} 
+                    frontLanguage={frontLanguage} 
+                    showDiacritics={showDiacritics}
+                    isAdmin={isAdminMode}
+                    onDelete={() => handleDeleteCard(card.id)}
+                    onEdit={() => openEditCardModal(card)}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+      </div>
+
+      {isFormOpen && (
+        <CardFormModal 
+          card={editingCard} 
+          categories={categories.filter(c => c !== "Todos")} 
+          onSave={handleSaveCard} 
+          onClose={() => setIsFormOpen(false)} 
+        />
+      )}
+
+      {isSmartImportOpen && (
+        <SmartImportModal 
+          onClose={() => setIsSmartImportOpen(false)}
+          onImport={handleBulkImport}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- COMPONENTE FLASHCARD ---
+function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
+  const [flipState, setFlipState] = useState(0);
+  useEffect(() => { setFlipState(0); }, [frontLanguage]);
+  const handleNextFace = () => { if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); };
+
+  const playAudio = (e) => {
+    e.stopPropagation();
+    const utterance = new SpeechSynthesisUtterance(data.arabic || "");
+    utterance.lang = 'ar-SA';
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const getCardStyle = () => {
+    if (isAdmin) return "bg-white border-slate-200 text-slate-800 cursor-default ring-2 ring-slate-100"; 
+    switch(flipState) {
+      case 0: return "bg-orange-50 border-orange-100 text-slate-800"; 
+      case 1: return "bg-emerald-50 border-emerald-200 text-emerald-900";
+      case 2: return "bg-amber-100 border-amber-200 text-amber-900";
+      default: return "";
+    }
+  };
+
+  const displayText = showDiacritics ? data.arabic : removeDiacritics(data.arabic);
+
+  return (
+    <div 
+      onClick={handleNextFace}
+      className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group ${getCardStyle()}`}
+    >
+      {isAdmin && (
+        <div className="absolute top-2 right-2 flex gap-2 z-10">
+          <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
+        </div>
+      )}
+      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2">
+        {isAdmin ? (
+          <>
+            <span className="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-500 font-mono mb-1 truncate max-w-full">{data.category}</span>
+            <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{data.spanish}</h3>
+            <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayText}</h3>
+            <p className="text-sm font-mono text-amber-700 italic opacity-80">{data.phonetic}</p>
+          </>
+        ) : (
+          <>
+            {flipState === 2 ? (
+                <>
+                    <p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p>
+                    <h3 className="text-lg font-mono text-amber-800 italic">{data.phonetic}</h3>
+                </>
+            ) : (frontLanguage === 'spanish' && flipState === 0) || (frontLanguage === 'arabic' && flipState === 1) ? (
+                <>
+                    <p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p>
+                    <h3 className="text-xl font-bold">{data.spanish}</h3>
+                </>
+            ) : (
+                <>
+                    <p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p>
+                    <h3 className="text-3xl font-arabic mb-4" dir="rtl">{displayText}</h3>
+                    <button onClick={playAudio} className="p-2 bg-emerald-200 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button>
+                </>
+            )}
+          </>
+        )}
+      </div>
+      {!isAdmin && (
+        <div className="mt-auto pt-2 text-[10px] uppercase tracking-widest opacity-30 font-bold">
+          {flipState === 0 ? "Ver reverso" : flipState === 1 ? "Ver fonética" : "Reiniciar"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- MODAL DE FORMULARIO (MANUAL) ---
+function CardFormModal({ card, categories, onSave, onClose }) {
+  const [formData, setFormData] = useState({
+    category: card?.category || "General",
+    spanish: card?.spanish || "",
+    arabic: card?.arabic || "",
+    phonetic: card?.phonetic || "",
+    id: card?.id || null
+  });
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
+        <div className="bg-slate-800 px-6 py-4 flex justify-between items-center text-white">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            {card ? <Edit2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+            {card ? "Editar Tarjeta" : "Nueva Tarjeta"}
+          </h2>
+          <button onClick={onClose} className="hover:bg-slate-700 p-1 rounded transition"><X className="w-5 h-5" /></button>
+        </div>
+        <form onSubmit={(e) => { e.preventDefault(); onSave(formData); }} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría</label>
+            <input list="categories-list" type="text" required className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} />
+            <datalist id="categories-list">{categories.map(cat => <option key={cat} value={cat} />)}</datalist>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Español</label>
+            <input type="text" required className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-medium" value={formData.spanish} onChange={e => setFormData({...formData, spanish: e.target.value})} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Árabe</label>
+              <input type="text" required dir="rtl" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-arabic text-lg" value={formData.arabic} onChange={e => setFormData({...formData, arabic: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label>
+              <input type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm" value={formData.phonetic} onChange={e => setFormData({...formData, phonetic: e.target.value})} />
+            </div>
+          </div>
+          <div className="pt-4 flex justify-end gap-3 border-t mt-4">
+            <button type="button" onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium">Cancelar</button>
+            <button type="submit" className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold flex items-center gap-2"><Save className="w-4 h-4" /> Guardar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// --- MODAL DE IMPORTACIÓN INTELIGENTE (IA) ---
+function SmartImportModal({ onClose, onImport }) {
+  const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
+  const [activeTab, setActiveTab] = useState('text'); // 'text' | 'image'
+  const [textInput, setTextInput] = useState("");
+  const [imageFile, setImageFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [generatedCards, setGeneratedCards] = useState([]);
+  const [status, setStatus] = useState("");
+
+  const handleApiKeyChange = (e) => {
+    setApiKey(e.target.value);
+    localStorage.setItem('openai_key', e.target.value);
+  };
+
+  const handleGenerate = async () => {
+    if (!apiKey) { alert("Por favor introduce tu API Key de OpenAI"); return; }
+    if (activeTab === 'text' && !textInput) return;
+    if (activeTab === 'image' && !imageFile) return;
+
+    setLoading(true);
+    setStatus("Conectando con la IA...");
+
+    try {
+      const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
+      let prompt = `
+        Actúa como un profesor experto de árabe. Tu tarea es extraer vocabulario y generar un JSON válido.
+        Devuelve SOLO un array JSON (sin markdown, sin explicaciones) con este formato:
+        [{ "category": "Tema detectado", "spanish": "Palabra en español", "arabic": "Palabra en árabe con TODAS las vocales (harakat)", "phonetic": "transcripción fonética simple" }]
+        
+        Si recibes una lista de palabras en español, tradúcelas al árabe.
+        Si recibes palabras en árabe, tradúcelas al español.
+        Asegúrate de que el campo "arabic" tenga los signos diacríticos completos para una correcta lectura.
+      `;
+
+      let userContent = "";
+
+      if (activeTab === 'text') {
+        userContent = [{ type: "text", text: `La lista de palabras es: ${textInput}` }];
+      } else {
+        // Convertir imagen a base64
+        const base64Image = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(imageFile);
+        });
+        userContent = [
+          { type: "text", text: "Extrae todas las palabras o frases de vocabulario de esta imagen." },
+          { type: "image_url", image_url: { url: base64Image } }
+        ];
+      }
+
+      setStatus("Procesando y traduciendo...");
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o", // Usamos GPT-4o porque soporta visión
+        messages: [
+          { role: "system", content: prompt },
+          { role: "user", content: userContent }
+        ],
+        max_tokens: 2000,
+      });
+
+      const rawContent = response.choices[0].message.content;
+      // Limpiar markdown si la IA lo añade
+      const jsonStr = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+      const parsedData = JSON.parse(jsonStr);
+
+      setGeneratedCards(parsedData);
+      setStatus("¡Hecho! Revisa las tarjetas.");
+
+    } catch (error) {
+      console.error(error);
+      alert("Error: " + error.message);
+      setStatus("Error.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        {/* HEADER */}
+        <div className="bg-purple-700 px-6 py-4 flex justify-between items-center text-white shrink-0">
+          <h2 className="text-lg font-bold flex items-center gap-2"><Wand2 className="w-5 h-5" /> Importador Mágico IA</h2>
+          <button onClick={onClose} className="hover:bg-purple-600 p-1 rounded transition"><X className="w-5 h-5" /></button>
+        </div>
+
+        {/* BODY */}
+        <div className="flex-1 overflow-y-auto p-6">
+          
+          {/* CONFIG API KEY */}
+          <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-100">
+            <label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label>
+            <input 
+              type="password" 
+              placeholder="sk-..." 
+              className="w-full p-2 border border-purple-200 rounded bg-white text-sm"
+              value={apiKey}
+              onChange={handleApiKeyChange}
+            />
+            <p className="text-[10px] text-purple-600 mt-1">La clave se guarda en tu navegador localmente.</p>
+          </div>
+
+          {generatedCards.length === 0 ? (
+            <div className="space-y-6">
+              {/* TABS */}
+              <div className="flex border-b border-slate-200">
+                <button 
+                  onClick={() => setActiveTab('text')}
+                  className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'text' ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                >
+                  <FileText className="w-4 h-4" /> Lista de Texto
+                </button>
+                <button 
+                  onClick={() => setActiveTab('image')}
+                  className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'image' ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                >
+                  <ImageIcon className="w-4 h-4" /> Imagen / Foto
+                </button>
+              </div>
+
+              {/* INPUTS */}
+              <div className="min-h-[200px] flex flex-col justify-center">
+                {activeTab === 'text' ? (
+                  <textarea 
+                    className="w-full h-40 p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none resize-none"
+                    placeholder="Escribe una lista de palabras (ej: Casa, Perro, Gato, Coche)..."
+                    value={textInput}
+                    onChange={(e) => setTextInput(e.target.value)}
+                  />
+                ) : (
+                  <div className="border-2 border-dashed border-slate-300 rounded-lg p-10 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 transition cursor-pointer relative">
+                    <input 
+                      type="file" 
+                      accept="image/*"
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      onChange={(e) => setImageFile(e.target.files[0])}
+                    />
+                    {imageFile ? (
+                      <div className="text-center">
+                        <p className="font-bold text-purple-600">{imageFile.name}</p>
+                        <p className="text-xs">Clic para cambiar</p>
+                      </div>
+                    ) : (
+                      <>
+                        <ImageIcon className="w-10 h-10 mb-2 opacity-50" />
+                        <p>Arrastra una imagen o haz clic aquí</p>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ACTION BUTTON */}
+              <button 
+                onClick={handleGenerate}
+                disabled={loading || !apiKey}
+                className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg hover:shadow-xl hover:scale-[1.01] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5" />}
+                {loading ? status : "Generar Tarjetas con IA"}
+              </button>
+            </div>
+          ) : (
+            // PREVIEW RESULTS
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="font-bold text-lg text-slate-700">Vista Previa ({generatedCards.length})</h3>
+                <button onClick={() => setGeneratedCards([])} className="text-xs text-red-500 hover:underline">Descartar y volver</button>
+              </div>
+              <div className="grid gap-2 max-h-[400px] overflow-y-auto">
+                {generatedCards.map((card, i) => (
+                  <div key={i} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
+                    <div className="w-8 h-8 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div>
+                    <div className="flex-1 grid grid-cols-3 gap-2 text-sm">
+                      <div className="font-bold text-slate-800">{card.spanish}</div>
+                      <div className="font-arabic text-emerald-700 text-right" dir="rtl">{card.arabic}</div>
+                      <div className="font-mono text-slate-400 text-xs italic">{card.phonetic}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* FOOTER */}
+        {generatedCards.length > 0 && (
+          <div className="p-4 border-t border-slate-100 flex justify-end gap-3 shrink-0 bg-slate-50">
+            <button onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button>
+            <button 
+              onClick={() => onImport(generatedCards)}
+              className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 flex items-center gap-2"
+            >
+              <CheckCircle className="w-4 h-4" /> Importar a Supabase
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
