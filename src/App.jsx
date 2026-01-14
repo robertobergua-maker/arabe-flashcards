@@ -102,8 +102,15 @@ export default function App() {
 
   const handleBulkImport = async (newCards) => {
     try {
-      // Limpiamos los IDs temporales antes de enviar a Supabase
-      const cleanCards = newCards.map(({ id, ...rest }) => rest);
+      // LIMPIEZA TOTAL: Copiamos SOLO los campos de texto.
+      // Esto elimina cualquier "id", "ID" o número que la IA haya inventado
+      // y evita el choque con la base de datos.
+      const cleanCards = newCards.map(c => ({
+        category: c.category,
+        spanish: c.spanish,
+        arabic: c.arabic,
+        phonetic: c.phonetic
+      }));
       
       const { data, error } = await supabase
         .from('flashcards')
@@ -117,6 +124,7 @@ export default function App() {
         setIsSmartImportOpen(false);
       }
     } catch (error) {
+      console.error(error);
       alert("Error importando: " + error.message);
     }
   };
