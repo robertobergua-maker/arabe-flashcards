@@ -1,11 +1,15 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import OpenAI from 'openai';
+import * as pdfjsLib from 'pdfjs-dist'; // IMPORTANTE: Librería PDF
 import { 
-  Search, Volume2, BookOpen, Mic, Upload, X, CheckCircle, 
-  AlertCircle, Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
-  Wand2, Image as ImageIcon, FileText, Loader2
+  Search, Volume2, BookOpen, X, CheckCircle, 
+  Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
+  Wand2, Image as ImageIcon, FileText, Loader2, FileUp
 } from 'lucide-react';
+
+// Configuración del Worker de PDF (Necesario para que funcione en React/Vite)
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
 
 // UTILIDAD: QUITAR DIACRÍTICOS
 const removeDiacritics = (text) => {
@@ -52,13 +56,10 @@ export default function App() {
   // --- GESTIÓN DEL MODO ADMIN CON CONTRASEÑA ---
   const handleAdminToggle = () => {
     if (isAdminMode) {
-      // Si ya está en modo admin, salir directamente
       setIsAdminMode(false);
     } else {
-      // Si quiere entrar, pedir contraseña
       const password = prompt("🔒 Introduce la contraseña de administrador:");
-      
-      // CAMBIA EL "1234" DE ABAJO POR TU CONTRASEÑA PREFERIDA
+      // CAMBIA EL "1234" POR TU CONTRASEÑA
       if (password === "1234") { 
         setIsAdminMode(true);
       } else if (password !== null) {
@@ -100,11 +101,11 @@ export default function App() {
     }
   };
 
+  // --- FUNCIÓN DE IMPORTACIÓN CORREGIDA (SOLUCIONA EL ERROR DE ID) ---
   const handleBulkImport = async (newCards) => {
     try {
-      // LIMPIEZA TOTAL: Copiamos SOLO los campos de texto.
-      // Esto elimina cualquier "id", "ID" o número que la IA haya inventado
-      // y evita el choque con la base de datos.
+      // LIMPIEZA TOTAL: Creamos objetos nuevos SIN el campo 'id'.
+      // Dejamos que Supabase asigne el ID automáticamente.
       const cleanCards = newCards.map(c => ({
         category: c.category,
         spanish: c.spanish,
@@ -124,7 +125,7 @@ export default function App() {
         setIsSmartImportOpen(false);
       }
     } catch (error) {
-      console.error(error);
+      console.error("Error Supabase:", error);
       alert("Error importando: " + error.message);
     }
   };
@@ -140,11 +141,10 @@ export default function App() {
     }
   };
 
-  // --- MODALES ---
+  // --- MODALES Y UI ---
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
-  // --- FILTROS ---
   const categories = useMemo(() => {
     const cats = new Set(cards.map(c => c.category).filter(Boolean));
     return ["Todos", ...Array.from(cats).sort()];
@@ -218,7 +218,6 @@ export default function App() {
       {/* BODY */}
       <div className="flex-1 overflow-y-auto bg-slate-100 p-4 md:p-8">
           <div className="max-w-6xl mx-auto">
-            {/* BARRA DE HERRAMIENTAS ADMIN */}
             {isAdminMode && (
               <div className="mb-6 flex flex-wrap justify-center gap-4 animate-fade-in-up">
                 <button 
@@ -231,7 +230,7 @@ export default function App() {
                   onClick={() => setIsSmartImportOpen(true)}
                   className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg hover:bg-purple-700 hover:scale-105 transition-all font-bold"
                 >
-                  <Wand2 className="w-5 h-5" /> Importar con IA (Listas/Fotos)
+                  <Wand2 className="w-5 h-5" /> Importar con IA
                 </button>
               </div>
             )}
@@ -402,12 +401,13 @@ function CardFormModal({ card, categories, onSave, onClose }) {
   );
 }
 
-// --- MODAL DE IMPORTACIÓN INTELIGENTE (IA) ---
+// --- MODAL DE IMPORTACIÓN INTELIGENTE (IA con PDF) ---
 function SmartImportModal({ onClose, onImport }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
-  const [activeTab, setActiveTab] = useState('text'); // 'text' | 'image'
+  const [activeTab, setActiveTab] = useState('text'); // 'text' | 'image' | 'pdf'
   const [textInput, setTextInput] = useState("");
   const [imageFile, setImageFile] = useState(null);
+  const [pdfFile, setPdfFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [generatedCards, setGeneratedCards] = useState([]);
   const [status, setStatus] = useState("");
@@ -417,10 +417,28 @@ function SmartImportModal({ onClose, onImport }) {
     localStorage.setItem('openai_key', e.target.value);
   };
 
+  // Función auxiliar para leer texto de PDF
+  const extractTextFromPDF = async (file) => {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+    
+    setStatus(`Leyendo PDF (${pdf.numPages} páginas)...`);
+    
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = textContent.items.map(item => item.str).join(' ');
+      fullText += `--- Página ${i} ---\n${pageText}\n`;
+    }
+    return fullText;
+  };
+
   const handleGenerate = async () => {
     if (!apiKey) { alert("Por favor introduce tu API Key de OpenAI"); return; }
     if (activeTab === 'text' && !textInput) return;
     if (activeTab === 'image' && !imageFile) return;
+    if (activeTab === 'pdf' && !pdfFile) return;
 
     setLoading(true);
     setStatus("Conectando con la IA...");
@@ -432,17 +450,20 @@ function SmartImportModal({ onClose, onImport }) {
         Devuelve SOLO un array JSON (sin markdown, sin explicaciones) con este formato:
         [{ "category": "Tema detectado", "spanish": "Palabra en español", "arabic": "Palabra en árabe con TODAS las vocales (harakat)", "phonetic": "transcripción fonética simple" }]
         
-        Si recibes una lista de palabras en español, tradúcelas al árabe.
-        Si recibes palabras en árabe, tradúcelas al español.
-        Asegúrate de que el campo "arabic" tenga los signos diacríticos completos para una correcta lectura.
+        Si recibes una lista de palabras o texto en español, tradúcelas al árabe.
+        Si recibes texto en árabe, tradúcelas al español.
+        Ignora números de página, encabezados o texto irrelevante del documento.
       `;
 
       let userContent = "";
 
       if (activeTab === 'text') {
         userContent = [{ type: "text", text: `La lista de palabras es: ${textInput}` }];
+      } else if (activeTab === 'pdf') {
+        const pdfText = await extractTextFromPDF(pdfFile);
+        userContent = [{ type: "text", text: `Extrae el vocabulario clave de este documento PDF:\n${pdfText}` }];
       } else {
-        // Convertir imagen a base64
+        // IMAGEN
         const base64Image = await new Promise((resolve) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result);
@@ -456,16 +477,15 @@ function SmartImportModal({ onClose, onImport }) {
 
       setStatus("Procesando y traduciendo...");
       const response = await openai.chat.completions.create({
-        model: "gpt-4o", // Usamos GPT-4o porque soporta visión
+        model: "gpt-4o", 
         messages: [
           { role: "system", content: prompt },
           { role: "user", content: userContent }
         ],
-        max_tokens: 2000,
+        max_tokens: 2500,
       });
 
       const rawContent = response.choices[0].message.content;
-      // Limpiar markdown si la IA lo añade
       const jsonStr = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
       const parsedData = JSON.parse(jsonStr);
 
@@ -493,7 +513,6 @@ function SmartImportModal({ onClose, onImport }) {
         {/* BODY */}
         <div className="flex-1 overflow-y-auto p-6">
           
-          {/* CONFIG API KEY */}
           <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-100">
             <label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label>
             <input 
@@ -503,71 +522,68 @@ function SmartImportModal({ onClose, onImport }) {
               value={apiKey}
               onChange={handleApiKeyChange}
             />
-            <p className="text-[10px] text-purple-600 mt-1">La clave se guarda en tu navegador localmente.</p>
           </div>
 
           {generatedCards.length === 0 ? (
             <div className="space-y-6">
-              {/* TABS */}
+              {/* TABS CON PDF */}
               <div className="flex border-b border-slate-200">
                 <button 
                   onClick={() => setActiveTab('text')}
                   className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'text' ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
                 >
-                  <FileText className="w-4 h-4" /> Lista de Texto
+                  <FileText className="w-4 h-4" /> Texto
                 </button>
                 <button 
                   onClick={() => setActiveTab('image')}
                   className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'image' ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
                 >
-                  <ImageIcon className="w-4 h-4" /> Imagen / Foto
+                  <ImageIcon className="w-4 h-4" /> Imagen
+                </button>
+                <button 
+                  onClick={() => setActiveTab('pdf')}
+                  className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'pdf' ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                >
+                  <FileUp className="w-4 h-4" /> PDF
                 </button>
               </div>
 
               {/* INPUTS */}
               <div className="min-h-[200px] flex flex-col justify-center">
-                {activeTab === 'text' ? (
+                {activeTab === 'text' && (
                   <textarea 
                     className="w-full h-40 p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none resize-none"
-                    placeholder="Escribe una lista de palabras (ej: Casa, Perro, Gato, Coche)..."
+                    placeholder="Escribe una lista..."
                     value={textInput}
                     onChange={(e) => setTextInput(e.target.value)}
                   />
-                ) : (
+                )}
+                
+                {activeTab === 'image' && (
                   <div className="border-2 border-dashed border-slate-300 rounded-lg p-10 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 transition cursor-pointer relative">
-                    <input 
-                      type="file" 
-                      accept="image/*"
-                      className="absolute inset-0 opacity-0 cursor-pointer"
-                      onChange={(e) => setImageFile(e.target.files[0])}
-                    />
-                    {imageFile ? (
-                      <div className="text-center">
-                        <p className="font-bold text-purple-600">{imageFile.name}</p>
-                        <p className="text-xs">Clic para cambiar</p>
-                      </div>
-                    ) : (
-                      <>
-                        <ImageIcon className="w-10 h-10 mb-2 opacity-50" />
-                        <p>Arrastra una imagen o haz clic aquí</p>
-                      </>
-                    )}
+                    <input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => setImageFile(e.target.files[0])} />
+                    {imageFile ? <p className="font-bold text-purple-600">{imageFile.name}</p> : <><ImageIcon className="w-10 h-10 mb-2 opacity-50" /><p>Sube una imagen</p></>}
+                  </div>
+                )}
+
+                {activeTab === 'pdf' && (
+                   <div className="border-2 border-dashed border-slate-300 rounded-lg p-10 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 transition cursor-pointer relative">
+                    <input type="file" accept="application/pdf" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => setPdfFile(e.target.files[0])} />
+                    {pdfFile ? <p className="font-bold text-red-600 flex items-center gap-2"><FileUp className="w-4 h-4"/> {pdfFile.name}</p> : <><FileUp className="w-10 h-10 mb-2 opacity-50" /><p>Sube un documento PDF</p></>}
                   </div>
                 )}
               </div>
 
-              {/* ACTION BUTTON */}
               <button 
                 onClick={handleGenerate}
                 disabled={loading || !apiKey}
                 className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg hover:shadow-xl hover:scale-[1.01] transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5" />}
-                {loading ? status : "Generar Tarjetas con IA"}
+                {loading ? status : "Generar Tarjetas"}
               </button>
             </div>
           ) : (
-            // PREVIEW RESULTS
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="font-bold text-lg text-slate-700">Vista Previa ({generatedCards.length})</h3>
@@ -589,7 +605,6 @@ function SmartImportModal({ onClose, onImport }) {
           )}
         </div>
 
-        {/* FOOTER */}
         {generatedCards.length > 0 && (
           <div className="p-4 border-t border-slate-100 flex justify-end gap-3 shrink-0 bg-slate-50">
             <button onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button>
