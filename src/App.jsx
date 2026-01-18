@@ -437,22 +437,22 @@ function SmartImportModal({ onClose, onImport }) {
       
       // PROMPT ACTUALIZADO: AGRESIVO PARA PDFS DIFÍCILES
       let prompt = `
-        Actúa como un traductor experto de árabe a español.
-        Analizas texto en bruto extraído de un PDF desordenado. Tu misión es rescatar TODO el vocabulario.
+        Actúa como un extractor de datos experto y traductor de árabe.
+        Estás analizando texto en bruto extraído de un PDF desordenado. Hay mucho "ruido" (números, códigos, encabezados). IGNÓRALO TODO.
+
+        TU MISIÓN: Rescatar CUALQUIER palabra o frase en árabe que encuentres en el texto.
 
         REGLAS OBLIGATORIAS:
-        1. Detecta CUALQUIER palabra o frase escrita en alfabeto árabe.
-        2. Si encuentras la traducción al español cerca, úsala.
-        3. IMPORTANTE: Si encuentras una palabra en árabe y NO ves su traducción clara al lado, TRADÚCELA TÚ MISMO al español basándote en tu conocimiento.
-        4. Ignora instrucciones del libro como "Lee", "Escucha", "Escribe", números de página o códigos como "".
-        5. Categoriza las palabras según su significado (ej: "Animales", "Comida", "Países"). Si no sabes, usa "General".
-        6. Asegúrate de que el campo "arabic" tenga los signos diacríticos (harakat) para leerlo bien.
+        1. Busca palabras en alfabeto árabe (ej: كتاب, مدرسة).
+        2. Si la traducción al español está cerca, úsala. SI NO ESTÁ, TRADÚCELA TÚ MISMO (es vital que generes la tarjeta igual).
+        3. Ignora palabras sueltas irrelevantes como "Lee", "Escucha", "Page", "Source", "Table".
+        4. Categoriza lógicamente (ej: si ves animales, pon categoría "Animales"). Si dudas, usa "Vocabulario PDF".
+        5. Asegúrate de que el campo "arabic" tenga SIEMPRE las vocales (harakat) puestas.
 
         Devuelve SOLO un array JSON válido con este formato:
-        [{ "category": "Categoría", "spanish": "Traducción", "arabic": "Palabra Árabe", "phonetic": "Transliteración simple" }]
+        [{ "category": "Categoría", "spanish": "Traducción", "arabic": "Palabra Árabe con vocales", "phonetic": "Transliteración simple" }]
         
-        Si no encuentras NADA válido, devuelve un array vacío [].
-        NO escribas nada más que el JSON.
+        Si no encuentras nada, devuelve array vacío []. NO escribas nada más que el JSON.
       `;
 
       let userContent = "";
