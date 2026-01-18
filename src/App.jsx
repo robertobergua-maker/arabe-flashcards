@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 
 // Configuración del Worker de PDF (Necesario para que funcione en React/Vite)
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.js`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 
 // UTILIDAD: QUITAR DIACRÍTICOS
 const removeDiacritics = (text) => {
