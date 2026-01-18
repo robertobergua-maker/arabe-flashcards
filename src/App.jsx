@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from './supabaseClient';
 import OpenAI from 'openai';
-import * as pdfjsLib from 'pdfjs-dist'; // IMPORTANTE: Librería PDF
+import * as pdfjsLib from 'pdfjs-dist'; 
 import { 
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp
 } from 'lucide-react';
 
-// Configuración del Worker de PDF (Necesario para que funcione en React/Vite)
+// Configuración del Worker de PDF
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 
 // UTILIDAD: QUITAR DIACRÍTICOS
@@ -59,7 +59,6 @@ export default function App() {
       setIsAdminMode(false);
     } else {
       const password = prompt("🔒 Introduce la contraseña de administrador:");
-      // CAMBIA EL "1234" POR TU CONTRASEÑA
       if (password === "1234") { 
         setIsAdminMode(true);
       } else if (password !== null) {
@@ -101,11 +100,8 @@ export default function App() {
     }
   };
 
-  // --- FUNCIÓN DE IMPORTACIÓN CORREGIDA (SOLUCIONA EL ERROR DE ID) ---
   const handleBulkImport = async (newCards) => {
     try {
-      // LIMPIEZA TOTAL: Creamos objetos nuevos SIN el campo 'id'.
-      // Dejamos que Supabase asigne el ID automáticamente.
       const cleanCards = newCards.map(c => ({
         category: c.category,
         spanish: c.spanish,
@@ -141,7 +137,7 @@ export default function App() {
     }
   };
 
-  // --- MODALES Y UI ---
+  // --- UI ---
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
@@ -163,7 +159,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
-      {/* HEADER */}
       <header className={`text-white shadow-md z-20 sticky top-0 transition-colors ${isAdminMode ? 'bg-slate-800' : 'bg-emerald-700'}`}>
         <div className="w-full px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
@@ -215,7 +210,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* BODY */}
       <div className="flex-1 overflow-y-auto bg-slate-100 p-4 md:p-8">
           <div className="max-w-6xl mx-auto">
             {isAdminMode && (
@@ -276,7 +270,7 @@ export default function App() {
   );
 }
 
-// --- COMPONENTE FLASHCARD ---
+// --- COMPONENTES ---
 function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
   const [flipState, setFlipState] = useState(0);
   useEffect(() => { setFlipState(0); }, [frontLanguage]);
@@ -351,7 +345,6 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
   );
 }
 
-// --- MODAL DE FORMULARIO (MANUAL) ---
 function CardFormModal({ card, categories, onSave, onClose }) {
   const [formData, setFormData] = useState({
     category: card?.category || "General",
@@ -401,10 +394,9 @@ function CardFormModal({ card, categories, onSave, onClose }) {
   );
 }
 
-// --- MODAL DE IMPORTACIÓN INTELIGENTE (IA con PDF) ---
 function SmartImportModal({ onClose, onImport }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
-  const [activeTab, setActiveTab] = useState('text'); // 'text' | 'image' | 'pdf'
+  const [activeTab, setActiveTab] = useState('text'); 
   const [textInput, setTextInput] = useState("");
   const [imageFile, setImageFile] = useState(null);
   const [pdfFile, setPdfFile] = useState(null);
@@ -417,14 +409,11 @@ function SmartImportModal({ onClose, onImport }) {
     localStorage.setItem('openai_key', e.target.value);
   };
 
-  // Función auxiliar para leer texto de PDF
   const extractTextFromPDF = async (file) => {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     let fullText = "";
-    
     setStatus(`Leyendo PDF (${pdf.numPages} páginas)...`);
-    
     for (let i = 1; i <= pdf.numPages; i++) {
       const page = await pdf.getPage(i);
       const textContent = await page.getTextContent();
@@ -445,6 +434,8 @@ function SmartImportModal({ onClose, onImport }) {
 
     try {
       const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
+      
+      // PROMPT ACTUALIZADO: AGRESIVO PARA PDFS DIFÍCILES
       let prompt = `
         Actúa como un traductor experto de árabe a español.
         Analizas texto en bruto extraído de un PDF desordenado. Tu misión es rescatar TODO el vocabulario.
@@ -459,6 +450,9 @@ function SmartImportModal({ onClose, onImport }) {
 
         Devuelve SOLO un array JSON válido con este formato:
         [{ "category": "Categoría", "spanish": "Traducción", "arabic": "Palabra Árabe", "phonetic": "Transliteración simple" }]
+        
+        Si no encuentras NADA válido, devuelve un array vacío [].
+        NO escribas nada más que el JSON.
       `;
 
       let userContent = "";
@@ -469,7 +463,6 @@ function SmartImportModal({ onClose, onImport }) {
         const pdfText = await extractTextFromPDF(pdfFile);
         userContent = [{ type: "text", text: `Extrae el vocabulario clave de este documento PDF:\n${pdfText}` }];
       } else {
-        // IMAGEN
         const base64Image = await new Promise((resolve) => {
           const reader = new FileReader();
           reader.onloadend = () => resolve(reader.result);
@@ -488,7 +481,7 @@ function SmartImportModal({ onClose, onImport }) {
           { role: "system", content: prompt },
           { role: "user", content: userContent }
         ],
-        max_tokens: 2500,
+        max_tokens: 3000,
       });
 
       const rawContent = response.choices[0].message.content;
@@ -510,15 +503,12 @@ function SmartImportModal({ onClose, onImport }) {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        {/* HEADER */}
         <div className="bg-purple-700 px-6 py-4 flex justify-between items-center text-white shrink-0">
           <h2 className="text-lg font-bold flex items-center gap-2"><Wand2 className="w-5 h-5" /> Importador Mágico IA</h2>
           <button onClick={onClose} className="hover:bg-purple-600 p-1 rounded transition"><X className="w-5 h-5" /></button>
         </div>
 
-        {/* BODY */}
         <div className="flex-1 overflow-y-auto p-6">
-          
           <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-100">
             <label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label>
             <input 
@@ -532,7 +522,6 @@ function SmartImportModal({ onClose, onImport }) {
 
           {generatedCards.length === 0 ? (
             <div className="space-y-6">
-              {/* TABS CON PDF */}
               <div className="flex border-b border-slate-200">
                 <button 
                   onClick={() => setActiveTab('text')}
@@ -554,7 +543,6 @@ function SmartImportModal({ onClose, onImport }) {
                 </button>
               </div>
 
-              {/* INPUTS */}
               <div className="min-h-[200px] flex flex-col justify-center">
                 {activeTab === 'text' && (
                   <textarea 
