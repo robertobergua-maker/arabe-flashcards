@@ -17,6 +17,16 @@ const removeDiacritics = (text) => {
   return text.replace(/[\u064B-\u065F\u0670]/g, '');
 };
 
+// UTILIDAD: BARAJAR ARRAY (Fisher-Yates Shuffle)
+const shuffleArray = (array) => {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+};
+
 export default function App() {
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -137,17 +147,36 @@ export default function App() {
     }
   };
 
-  // --- UI ---
+  // --- UI Y ORDENACIÓN AVANZADA ---
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
+  // 1. ORDENACIÓN INTELIGENTE DE CATEGORÍAS (Pistas primero)
   const categories = useMemo(() => {
     const cats = new Set(cards.map(c => c.category).filter(Boolean));
-    return ["Todos", ...Array.from(cats).sort()];
+    const allCats = Array.from(cats);
+
+    // Separamos las que son "Pista ..." del resto
+    const pistaCats = allCats.filter(c => c.toLowerCase().startsWith('pista'));
+    const otherCats = allCats.filter(c => !c.toLowerCase().startsWith('pista'));
+
+    // Ordenamos las pistas numéricamente (Pista 1, Pista 2, Pista 10...)
+    pistaCats.sort((a, b) => {
+      // Extraer números de la cadena
+      const numA = parseInt(a.match(/\d+/)?.[0] || 0);
+      const numB = parseInt(b.match(/\d+/)?.[0] || 0);
+      return numA - numB;
+    });
+
+    // El resto alfabéticamente
+    otherCats.sort((a, b) => a.localeCompare(b));
+
+    return ["Todos", ...pistaCats, ...otherCats];
   }, [cards]);
 
+  // 2. FILTRADO Y BARAJADO ALEATORIO EN "TODOS"
   const filteredCards = useMemo(() => {
-    return cards.filter(card => {
+    let result = cards.filter(card => {
       const s = (card.spanish || "").toLowerCase();
       const a = removeDiacritics(card.arabic || "");
       const term = searchTerm.toLowerCase();
@@ -155,6 +184,13 @@ export default function App() {
       const matchesCategory = selectedCategory === "Todos" || card.category === selectedCategory;
       return matchesSearch && matchesCategory;
     });
+
+    // Si estamos en "Todos" y no estamos buscando, BARAJAR
+    if (selectedCategory === "Todos" && searchTerm === "") {
+      return shuffleArray(result);
+    }
+
+    return result;
   }, [cards, searchTerm, selectedCategory]);
 
   return (
@@ -435,7 +471,7 @@ function SmartImportModal({ onClose, onImport }) {
     try {
       const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
       
-      // PROMPT ACTUALIZADO: AGRESIVO PARA PDFS DIFÍCILES
+      // PROMPT "AGRESIVO" PARA PDFS DIFÍCILES
       let prompt = `
         Actúa como un extractor de datos experto y traductor de árabe.
         Estás analizando texto en bruto extraído de un PDF desordenado. Hay mucho "ruido" (números, códigos, encabezados). IGNÓRALO TODO.
