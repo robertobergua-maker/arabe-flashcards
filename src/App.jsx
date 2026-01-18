@@ -446,13 +446,19 @@ function SmartImportModal({ onClose, onImport }) {
     try {
       const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
       let prompt = `
-        Actúa como un profesor experto de árabe. Tu tarea es extraer vocabulario y generar un JSON válido.
-        Devuelve SOLO un array JSON (sin markdown, sin explicaciones) con este formato:
-        [{ "category": "Tema detectado", "spanish": "Palabra en español", "arabic": "Palabra en árabe con TODAS las vocales (harakat)", "phonetic": "transcripción fonética simple" }]
-        
-        Si recibes una lista de palabras o texto en español, tradúcelas al árabe.
-        Si recibes texto en árabe, tradúcelas al español.
-        Ignora números de página, encabezados o texto irrelevante del documento.
+        Actúa como un traductor experto de árabe a español.
+        Analizas texto en bruto extraído de un PDF desordenado. Tu misión es rescatar TODO el vocabulario.
+
+        REGLAS OBLIGATORIAS:
+        1. Detecta CUALQUIER palabra o frase escrita en alfabeto árabe.
+        2. Si encuentras la traducción al español cerca, úsala.
+        3. IMPORTANTE: Si encuentras una palabra en árabe y NO ves su traducción clara al lado, TRADÚCELA TÚ MISMO al español basándote en tu conocimiento.
+        4. Ignora instrucciones del libro como "Lee", "Escucha", "Escribe", números de página o códigos como "".
+        5. Categoriza las palabras según su significado (ej: "Animales", "Comida", "Países"). Si no sabes, usa "General".
+        6. Asegúrate de que el campo "arabic" tenga los signos diacríticos (harakat) para leerlo bien.
+
+        Devuelve SOLO un array JSON válido con este formato:
+        [{ "category": "Categoría", "spanish": "Traducción", "arabic": "Palabra Árabe", "phonetic": "Transliteración simple" }]
       `;
 
       let userContent = "";
