@@ -51,7 +51,6 @@ export default function App() {
   async function fetchCards() {
     try {
       setLoading(true);
-      // IMPORTANTE: .range(0, 9999) asegura que cargamos tus 1325 tarjetas (y hasta 10.000)
       const { data, error } = await supabase
         .from('flashcards')
         .select('*')
@@ -143,30 +142,38 @@ export default function App() {
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
-  // Lógica de Categorías ROBUSTA
+  // --- LÓGICA DE CATEGORÍAS (MULTICATEGORÍA) ---
   const categories = useMemo(() => {
-    // 1. Obtenemos todas las categorías, quitamos espacios y filtramos nulos/vacíos
-    // Esto unifica "Frases " y "Frases" en una sola.
-    const rawCategories = cards
-      .map(c => c.category ? c.category.trim() : "")
-      .filter(c => c !== "");
+    const allTags = new Set();
+
+    cards.forEach(card => {
+      // Si está vacía o es null, la asignamos a "General"
+      if (!card.category || !card.category.trim()) {
+        allTags.add("General");
+        return;
+      }
+
+      // DIVIDIMOS POR COMAS para soportar múltiples categorías
+      const tags = card.category.split(',').map(tag => tag.trim());
+      
+      tags.forEach(tag => {
+        if (tag) allTags.add(tag);
+      });
+    });
+
+    const uniqueCats = Array.from(allTags);
     
-    // 2. Eliminamos duplicados exactos
-    const uniqueCats = Array.from(new Set(rawCategories));
-    
-    // 3. Separamos "Pistas" del resto
     const pistaCats = uniqueCats.filter(c => c.toLowerCase().startsWith('pista'));
     const otherCats = uniqueCats.filter(c => !c.toLowerCase().startsWith('pista'));
 
-    // 4. Ordenamos Pistas por número (ej: Pista 2 antes que Pista 10)
+    // Ordenar Pistas numéricamente
     pistaCats.sort((a, b) => {
-      // Extraemos el primer número que encontremos en el string
       const numA = parseInt(a.match(/\d+/)?.[0] || 0);
       const numB = parseInt(b.match(/\d+/)?.[0] || 0);
       return numA - numB;
     });
 
-    // 5. Ordenamos el resto alfabéticamente (localeCompare maneja acentos mejor)
+    // Ordenar resto alfabéticamente
     otherCats.sort((a, b) => a.localeCompare(b));
 
     return ["Todos", ...pistaCats, ...otherCats];
@@ -174,16 +181,23 @@ export default function App() {
 
   const filteredCards = useMemo(() => {
     let result = cards.filter(card => {
-      // Normalizamos también aquí para asegurar que coincidan con la lista
-      const cardCat = card.category ? card.category.trim() : "";
-      
       const s = (card.spanish || "").toLowerCase();
       const a = removeDiacritics(card.arabic || "");
       const term = searchTerm.toLowerCase();
-      
       const matchesSearch = s.includes(term) || a.includes(term);
-      const matchesCategory = selectedCategory === "Todos" || cardCat === selectedCategory;
-      
+
+      // LÓGICA DE FILTRADO MULTICATEGORÍA
+      let matchesCategory = false;
+      if (selectedCategory === "Todos") {
+        matchesCategory = true;
+      } else {
+        const cardCatsString = card.category || "General";
+        // Convertimos la categoría de la tarjeta en un array de etiquetas
+        const cardTags = cardCatsString.split(',').map(t => t.trim());
+        // Comprobamos si la categoría seleccionada está en ese array
+        matchesCategory = cardTags.includes(selectedCategory);
+      }
+
       return matchesSearch && matchesCategory;
     });
 
@@ -524,6 +538,9 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
   };
 
   const displayText = showDiacritics ? data.arabic : removeDiacritics(data.arabic);
+  
+  // Procesamos las categorías para visualizarlas bonitas
+  const tags = data.category ? data.category.split(',').map(t => t.trim()).filter(Boolean) : ['General'];
 
   return (
     <div 
@@ -569,11 +586,13 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
         )}
       </div>
 
-      {/* Categoría (Abajo) */}
-      <div className="mt-auto pt-2 pb-1 text-center">
-        <span className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70">
-          {data.category || 'General'}
-        </span>
+      {/* Categorías (Abajo - Estilo Píldoras) */}
+      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center">
+        {tags.map((tag, i) => (
+          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70">
+            {tag}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -581,7 +600,7 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
 
 function CardFormModal({ card, categories, onSave, onClose }) {
   const [formData, setFormData] = useState({
-    category: card?.category || "General",
+    category: card?.category || "",
     spanish: card?.spanish || "",
     arabic: card?.arabic || "",
     phonetic: card?.phonetic || "",
@@ -600,8 +619,9 @@ function CardFormModal({ card, categories, onSave, onClose }) {
         </div>
         <form onSubmit={(e) => { e.preventDefault(); onSave(formData); }} className="p-6 space-y-4">
           <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría</label>
-            <input list="categories-list" type="text" required className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} />
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría(s)</label>
+            <p className="text-[10px] text-slate-400 mb-1">Separa con comas para asignar múltiples categorías (ej: Comida, Verbos).</p>
+            <input list="categories-list" type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} placeholder="Ej: Pista 1, Saludos" />
             <datalist id="categories-list">{categories.map(cat => <option key={cat} value={cat} />)}</datalist>
           </div>
           <div>
