@@ -6,7 +6,7 @@ import {
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, AlertTriangle
+  Settings, AlertTriangle, Layers
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -31,6 +31,7 @@ const shuffleArray = (array) => {
 export default function App() {
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingProgress, setLoadingProgress] = useState(""); // Nuevo estado para feedback de carga
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   const [frontLanguage, setFrontLanguage] = useState("spanish");
@@ -43,24 +44,47 @@ export default function App() {
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
 
-  // --- CARGAR DATOS ---
+  // --- CARGAR DATOS (PAGINACIÓN ROBUSTA) ---
   useEffect(() => {
-    fetchCards();
+    fetchAllCards();
   }, []);
 
-  async function fetchCards() {
+  async function fetchAllCards() {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('flashcards')
-        .select('*')
-        .order('id', { ascending: false })
-        .range(0, 9999);
+      let allData = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
 
-      if (error) throw error;
-      setCards(data);
+      while (hasMore) {
+        setLoadingProgress(`Cargando bloque ${page + 1}... (${allData.length} tarjetas)`);
+        
+        const { data, error } = await supabase
+          .from('flashcards')
+          .select('*')
+          .range(page * pageSize, (page + 1) * pageSize - 1)
+          .order('id', { ascending: false });
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          allData = [...allData, ...data];
+          // Si recibimos menos filas que el tamaño de página, es que ya no hay más
+          if (data.length < pageSize) {
+            hasMore = false;
+          } else {
+            page++;
+          }
+        } else {
+          hasMore = false;
+        }
+      }
+
+      setCards(allData);
     } catch (error) {
       console.error("Error cargando tarjetas:", error.message);
+      alert("Error de conexión: " + error.message);
     } finally {
       setLoading(false);
     }
@@ -84,7 +108,7 @@ export default function App() {
     try {
       if (cardData.id) {
         const { error } = await supabase.from('flashcards').update({
-            category: cardData.category, 
+            category: cardData.category,
             spanish: cardData.spanish,
             arabic: cardData.arabic,
             phonetic: cardData.phonetic
@@ -142,17 +166,20 @@ export default function App() {
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
-  // --- LÓGICA DE CATEGORÍAS (MULTICATEGORÍA CON PUNTO Y COMA) ---
+  // --- LÓGICA DE CATEGORÍAS (MULTICATEGORÍA CON PUNTO Y COMA ;) ---
   const categories = useMemo(() => {
     const allTags = new Set();
 
     cards.forEach(card => {
+      // Si no tiene categoría, la marcamos como General
       if (!card.category) {
         allTags.add("General");
         return;
       }
-      // SEPARAMOS POR PUNTO Y COMA (;)
-      // Esto respeta títulos con comas como "Pista 29: El trabajo, las profesiones"
+      
+      // DIVIDIMOS SOLO POR PUNTO Y COMA (;)
+      // Esto permite que "Pista 29: El trabajo, las profesiones" se mantenga como UNA sola categoría
+      // Pero "Comida; Verbos" se convierta en DOS.
       const tags = card.category.toString().split(';');
       
       tags.forEach(tag => {
@@ -196,8 +223,9 @@ export default function App() {
         matchesCategory = true;
       } else {
         const rawCat = card.category || "General";
-        // Convertimos a array usando ;
+        // Convertimos la cadena de la DB en array de etiquetas
         const cardTags = rawCat.toString().split(';').map(t => t.trim());
+        // Verificamos si la categoría seleccionada está en ese array
         matchesCategory = cardTags.includes(selectedCategory);
       }
 
@@ -289,7 +317,10 @@ export default function App() {
             )}
 
             {loading ? (
-               <div className="text-center py-20 text-slate-400 animate-pulse">Cargando...</div>
+               <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3">
+                 <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
+                 <span className="font-medium animate-pulse">{loadingProgress || "Conectando..."}</span>
+               </div>
             ) : filteredCards.length === 0 ? (
               <div className="text-center py-20 text-slate-400">No hay tarjetas para esta selección.</div>
             ) : (
@@ -306,6 +337,13 @@ export default function App() {
                   />
                 ))}
               </div>
+            )}
+            
+            {/* DEBUG: Contador discreto para verificar carga completa */}
+            {!loading && (
+                <div className="mt-8 text-center text-[10px] text-slate-300 font-mono">
+                    Total Tarjetas: {cards.length} | Categorías: {categories.length - 1}
+                </div>
             )}
           </div>
       </div>
@@ -330,7 +368,7 @@ export default function App() {
         <MaintenanceModal 
           onClose={() => setIsMaintenanceOpen(false)}
           cards={cards}
-          refreshCards={fetchCards}
+          refreshCards={fetchAllCards}
         />
       )}
     </div>
