@@ -51,6 +51,7 @@ export default function App() {
   async function fetchCards() {
     try {
       setLoading(true);
+      // IMPORTANTE: .range(0, 9999) asegura que cargamos tus 1325 tarjetas (y hasta 10.000)
       const { data, error } = await supabase
         .from('flashcards')
         .select('*')
@@ -142,36 +143,47 @@ export default function App() {
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
-  // Lógica de Ordenación de Categorías
+  // Lógica de Categorías ROBUSTA
   const categories = useMemo(() => {
-    const cats = new Set(cards.map(c => c.category).filter(Boolean));
-    const allCats = Array.from(cats);
+    // 1. Obtenemos todas las categorías, quitamos espacios y filtramos nulos/vacíos
+    // Esto unifica "Frases " y "Frases" en una sola.
+    const rawCategories = cards
+      .map(c => c.category ? c.category.trim() : "")
+      .filter(c => c !== "");
     
-    // 1. Separamos "Pistas" del resto
-    const pistaCats = allCats.filter(c => c.toLowerCase().startsWith('pista'));
-    const otherCats = allCats.filter(c => !c.toLowerCase().startsWith('pista'));
+    // 2. Eliminamos duplicados exactos
+    const uniqueCats = Array.from(new Set(rawCategories));
+    
+    // 3. Separamos "Pistas" del resto
+    const pistaCats = uniqueCats.filter(c => c.toLowerCase().startsWith('pista'));
+    const otherCats = uniqueCats.filter(c => !c.toLowerCase().startsWith('pista'));
 
-    // 2. Ordenamos Pistas por número (Pista 2 antes que Pista 10)
+    // 4. Ordenamos Pistas por número (ej: Pista 2 antes que Pista 10)
     pistaCats.sort((a, b) => {
+      // Extraemos el primer número que encontremos en el string
       const numA = parseInt(a.match(/\d+/)?.[0] || 0);
       const numB = parseInt(b.match(/\d+/)?.[0] || 0);
       return numA - numB;
     });
 
-    // 3. Ordenamos el resto alfabéticamente
+    // 5. Ordenamos el resto alfabéticamente (localeCompare maneja acentos mejor)
     otherCats.sort((a, b) => a.localeCompare(b));
 
-    // 4. Combinamos: Todos -> Pistas -> Resto
     return ["Todos", ...pistaCats, ...otherCats];
   }, [cards]);
 
   const filteredCards = useMemo(() => {
     let result = cards.filter(card => {
+      // Normalizamos también aquí para asegurar que coincidan con la lista
+      const cardCat = card.category ? card.category.trim() : "";
+      
       const s = (card.spanish || "").toLowerCase();
       const a = removeDiacritics(card.arabic || "");
       const term = searchTerm.toLowerCase();
+      
       const matchesSearch = s.includes(term) || a.includes(term);
-      const matchesCategory = selectedCategory === "Todos" || card.category === selectedCategory;
+      const matchesCategory = selectedCategory === "Todos" || cardCat === selectedCategory;
+      
       return matchesSearch && matchesCategory;
     });
 
@@ -308,10 +320,10 @@ export default function App() {
   );
 }
 
-// --- MODAL DE MANTENIMIENTO BD (Simplificado) ---
+// --- MODAL DE MANTENIMIENTO BD ---
 function MaintenanceModal({ onClose, cards, refreshCards }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
-  const [activeTab, setActiveTab] = useState('audit'); // Default: Auditoría
+  const [activeTab, setActiveTab] = useState('audit'); 
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
   const [auditResults, setAuditResults] = useState([]);
