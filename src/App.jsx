@@ -6,7 +6,7 @@ import {
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, Copy, AlertTriangle, Layers
+  Settings, Copy, AlertTriangle
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -62,7 +62,6 @@ export default function App() {
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
 
-  // --- CARGAR DATOS ---
   useEffect(() => {
     fetchCards();
   }, []);
@@ -97,7 +96,6 @@ export default function App() {
     }
   };
 
-  // --- FUNCIONES CRUD ---
   const handleSaveCard = async (cardData) => {
     try {
       if (cardData.id) {
@@ -156,7 +154,6 @@ export default function App() {
     }
   };
 
-  // --- UI Y ORDENACIÓN ---
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
@@ -332,7 +329,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
   const [auditResults, setAuditResults] = useState([]);
   const [duplicateGroups, setDuplicateGroups] = useState([]);
 
-  // BUSCAR DUPLICADOS
   useEffect(() => {
     if (activeTab === 'duplicates') {
       const groups = {};
@@ -341,13 +337,11 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
         if (!groups[key]) groups[key] = [];
         groups[key].push(c);
       });
-      // Filtramos solo los que tienen más de 1
       const dups = Object.values(groups).filter(g => g.length > 1);
       setDuplicateGroups(dups);
     }
   }, [activeTab, cards]);
 
-  // --- 1. GENERAR FRASES ---
   const handleGeneratePhraseCopies = async () => {
     if (!window.confirm("Se buscarán entradas con más de una palabra y se crearán copias en la categoría 'Frases'. ¿Continuar?")) return;
     setLoading(true);
@@ -360,7 +354,13 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
       const toCreate = [];
       candidates.forEach(c => {
         if (!existingPhrases.has(c.arabic.trim())) {
-          toCreate.push({ category: "Frases", spanish: c.spanish, arabic: c.arabic, phonetic: c.phonetic });
+          // IMPORTANTE: NO PASAMOS 'id' PARA QUE SUPABASE LO CREE
+          toCreate.push({ 
+            category: "Frases", 
+            spanish: c.spanish, 
+            arabic: c.arabic, 
+            phonetic: c.phonetic 
+          });
           existingPhrases.add(c.arabic.trim());
         }
       });
@@ -381,7 +381,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     }
   };
 
-  // --- 2. LIMPIEZA NUNACIÓN ---
   const handleCleanNunation = async () => {
     setLoading(true);
     setLogs(["Analizando nunaciones..."]);
@@ -403,7 +402,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     }
   };
 
-  // --- 3. AUDITORÍA IA ---
   const handleAudit = async () => {
     if (!apiKey) { alert("Necesitas la API Key de OpenAI"); return; }
     setLoading(true);
@@ -456,7 +454,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
   const handleDeleteDuplicate = async (id) => {
     if(!confirm("¿Borrar esta copia?")) return;
     await supabase.from('flashcards').delete().eq('id', id);
-    await refreshCards(); // Esto actualizará la lista de duplicados automáticamente
+    await refreshCards();
   };
 
   return (
@@ -577,7 +575,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
   );
 }
 
-// --- COMPONENTES PRINCIPALES (Flashcard, Modal Manual, Importador IA...) ---
+// --- COMPONENTE FLASHCARD (Ahora muestra la categoría) ---
 function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
   const [flipState, setFlipState] = useState(0);
   useEffect(() => { setFlipState(0); }, [frontLanguage]);
@@ -607,16 +605,22 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
       onClick={handleNextFace}
       className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group ${getCardStyle()}`}
     >
+      {/* Etiqueta de Categoría (VISIBLE SIEMPRE) */}
+      <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
+        <span className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70">
+          {data.category}
+        </span>
+      </div>
+
       {isAdmin && (
         <div className="absolute top-2 right-2 flex gap-2 z-10">
           <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
           <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
         </div>
       )}
-      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2">
+      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
         {isAdmin ? (
           <>
-            <span className="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-500 font-mono mb-1 truncate max-w-full">{data.category}</span>
             <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{data.spanish}</h3>
             <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayText}</h3>
             <p className="text-sm font-mono text-amber-700 italic opacity-80">{data.phonetic}</p>
