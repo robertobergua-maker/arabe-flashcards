@@ -28,27 +28,6 @@ const shuffleArray = (array) => {
   return newArray;
 };
 
-// (Las utilidades de limpieza de nunación se han mantenido fuera por si se necesitan en el futuro, 
-// aunque ya no se usan en el modal de mantenimiento).
-const EXCEPTION_WORDS = [
-    "شكراً", "جداً", "أبداً", "حالاً", "طبعاً", "عموماً", 
-    "يومياً", "مثلاً", "فعلاً", "تقريباً", "أهلاً", "سهلاً",
-    "دائماً", "غالباً", "أحياناً", "قليلاً"
-];
-
-const cleanNunationText = (text) => {
-  if (!text) return "";
-  const words = text.split(" ");
-  const cleanedWords = words.map(word => {
-    const cleanCheck = word.replace(/[.،]/g, "");
-    if (EXCEPTION_WORDS.some(ex => cleanCheck.includes(ex))) {
-      return word;
-    }
-    return word.replace(/[\u064B\u064C\u064D]+$/g, "");
-  });
-  return cleanedWords.join(" ");
-};
-
 export default function App() {
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -76,7 +55,7 @@ export default function App() {
         .from('flashcards')
         .select('*')
         .order('id', { ascending: false })
-        .range(0, 9999); // Carga todas las tarjetas sin límite
+        .range(0, 9999);
 
       if (error) throw error;
       setCards(data);
@@ -163,26 +142,26 @@ export default function App() {
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
+  // Lógica de Ordenación de Categorías
   const categories = useMemo(() => {
     const cats = new Set(cards.map(c => c.category).filter(Boolean));
     const allCats = Array.from(cats);
     
-    // Separamos las categorías que empiezan por "pista" del resto
+    // 1. Separamos "Pistas" del resto
     const pistaCats = allCats.filter(c => c.toLowerCase().startsWith('pista'));
-    // El resto incluye "Frases" y cualquier otra categoría
     const otherCats = allCats.filter(c => !c.toLowerCase().startsWith('pista'));
 
-    // Ordenamos las pistas numéricamente (ej: Pista 2 va antes que Pista 10)
+    // 2. Ordenamos Pistas por número (Pista 2 antes que Pista 10)
     pistaCats.sort((a, b) => {
       const numA = parseInt(a.match(/\d+/)?.[0] || 0);
       const numB = parseInt(b.match(/\d+/)?.[0] || 0);
       return numA - numB;
     });
 
-    // Ordenamos el resto alfabéticamente
+    // 3. Ordenamos el resto alfabéticamente
     otherCats.sort((a, b) => a.localeCompare(b));
 
-    // Construimos el array final: Todos -> Pistas -> Resto
+    // 4. Combinamos: Todos -> Pistas -> Resto
     return ["Todos", ...pistaCats, ...otherCats];
   }, [cards]);
 
@@ -329,7 +308,7 @@ export default function App() {
   );
 }
 
-// --- MODAL DE MANTENIMIENTO BD ---
+// --- MODAL DE MANTENIMIENTO BD (Simplificado) ---
 function MaintenanceModal({ onClose, cards, refreshCards }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
   const [activeTab, setActiveTab] = useState('audit'); // Default: Auditoría
@@ -416,7 +395,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
         </div>
 
         <div className="flex border-b border-slate-200 overflow-x-auto">
-            {/* Se ha eliminado el botón y la funcionalidad de "Limpieza" */}
             <button onClick={() => setActiveTab('audit')} className={`px-6 py-3 font-bold text-sm whitespace-nowrap ${activeTab === 'audit' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>1. Auditoría IA</button>
             <button onClick={() => setActiveTab('duplicates')} className={`px-6 py-3 font-bold text-sm whitespace-nowrap ${activeTab === 'duplicates' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>2. Duplicados ({duplicateGroups.length})</button>
         </div>
