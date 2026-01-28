@@ -6,7 +6,7 @@ import {
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, Copy, AlertTriangle
+  Settings, Copy, AlertTriangle, Layers
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -62,6 +62,7 @@ export default function App() {
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
 
+  // --- CARGAR DATOS ---
   useEffect(() => {
     fetchCards();
   }, []);
@@ -72,7 +73,8 @@ export default function App() {
       const { data, error } = await supabase
         .from('flashcards')
         .select('*')
-        .order('id', { ascending: false });
+        .order('id', { ascending: false })
+        .range(0, 9999); // Carga todas las tarjetas sin límite
 
       if (error) throw error;
       setCards(data);
@@ -96,6 +98,7 @@ export default function App() {
     }
   };
 
+  // --- FUNCIONES CRUD ---
   const handleSaveCard = async (cardData) => {
     try {
       if (cardData.id) {
@@ -154,6 +157,7 @@ export default function App() {
     }
   };
 
+  // --- UI Y ORDENACIÓN ---
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
@@ -333,6 +337,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     if (activeTab === 'duplicates') {
       const groups = {};
       cards.forEach(c => {
+        if (!c.arabic) return;
         const key = c.arabic.trim();
         if (!groups[key]) groups[key] = [];
         groups[key].push(c);
@@ -354,7 +359,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
       const toCreate = [];
       candidates.forEach(c => {
         if (!existingPhrases.has(c.arabic.trim())) {
-          // IMPORTANTE: NO PASAMOS 'id' PARA QUE SUPABASE LO CREE
           toCreate.push({ 
             category: "Frases", 
             spanish: c.spanish, 
@@ -387,6 +391,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     let changes = 0;
     try {
       for (const card of cards) {
+        if (!card.arabic) continue;
         const clean = cleanNunationText(card.arabic);
         if (card.arabic !== clean) {
           await supabase.from('flashcards').update({ arabic: clean }).eq('id', card.id);
@@ -575,7 +580,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
   );
 }
 
-// --- COMPONENTE FLASHCARD (Ahora muestra la categoría) ---
+// --- COMPONENTE FLASHCARD (MODIFICADO: Categoría abajo) ---
 function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
   const [flipState, setFlipState] = useState(0);
   useEffect(() => { setFlipState(0); }, [frontLanguage]);
@@ -605,19 +610,15 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
       onClick={handleNextFace}
       className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group ${getCardStyle()}`}
     >
-      {/* Etiqueta de Categoría (VISIBLE SIEMPRE) */}
-      <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10">
-        <span className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70">
-          {data.category}
-        </span>
-      </div>
-
+      {/* Botones Admin */}
       {isAdmin && (
         <div className="absolute top-2 right-2 flex gap-2 z-10">
           <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
           <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
         </div>
       )}
+
+      {/* Contenido Principal */}
       <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
         {isAdmin ? (
           <>
@@ -647,11 +648,13 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
           </>
         )}
       </div>
-      {!isAdmin && (
-        <div className="mt-auto pt-2 text-[10px] uppercase tracking-widest opacity-30 font-bold">
-          {flipState === 0 ? "Ver reverso" : flipState === 1 ? "Ver fonética" : "Reiniciar"}
-        </div>
-      )}
+
+      {/* Categoría (Abajo, sustituyendo leyendas) */}
+      <div className="mt-auto pt-2 pb-1 text-center">
+        <span className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70">
+          {data.category || 'General'}
+        </span>
+      </div>
     </div>
   );
 }
