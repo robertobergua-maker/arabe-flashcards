@@ -84,7 +84,7 @@ export default function App() {
     try {
       if (cardData.id) {
         const { error } = await supabase.from('flashcards').update({
-            category: cardData.category,
+            category: cardData.category, 
             spanish: cardData.spanish,
             arabic: cardData.arabic,
             phonetic: cardData.phonetic
@@ -142,31 +142,34 @@ export default function App() {
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
-  // --- LÓGICA DE CATEGORÍAS (MULTICATEGORÍA) ---
+  // --- LÓGICA DE CATEGORÍAS (MULTICATEGORÍA CON PUNTO Y COMA) ---
   const categories = useMemo(() => {
     const allTags = new Set();
 
     cards.forEach(card => {
-      // Si está vacía o es null, la asignamos a "General"
-      if (!card.category || !card.category.trim()) {
+      if (!card.category) {
         allTags.add("General");
         return;
       }
-
-      // DIVIDIMOS POR COMAS para soportar múltiples categorías
-      const tags = card.category.split(',').map(tag => tag.trim());
+      // SEPARAMOS POR PUNTO Y COMA (;)
+      // Esto respeta títulos con comas como "Pista 29: El trabajo, las profesiones"
+      const tags = card.category.toString().split(';');
       
       tags.forEach(tag => {
-        if (tag) allTags.add(tag);
+        const cleanTag = tag.trim();
+        if (cleanTag.length > 0) {
+          allTags.add(cleanTag);
+        }
       });
     });
 
     const uniqueCats = Array.from(allTags);
     
+    // Filtro Pistas vs Resto
     const pistaCats = uniqueCats.filter(c => c.toLowerCase().startsWith('pista'));
     const otherCats = uniqueCats.filter(c => !c.toLowerCase().startsWith('pista'));
 
-    // Ordenar Pistas numéricamente
+    // Ordenar Pistas por número
     pistaCats.sort((a, b) => {
       const numA = parseInt(a.match(/\d+/)?.[0] || 0);
       const numB = parseInt(b.match(/\d+/)?.[0] || 0);
@@ -181,20 +184,20 @@ export default function App() {
 
   const filteredCards = useMemo(() => {
     let result = cards.filter(card => {
+      // 1. Filtro de texto
       const s = (card.spanish || "").toLowerCase();
       const a = removeDiacritics(card.arabic || "");
       const term = searchTerm.toLowerCase();
       const matchesSearch = s.includes(term) || a.includes(term);
 
-      // LÓGICA DE FILTRADO MULTICATEGORÍA
+      // 2. Filtro de Categoría (Lógica Multietiqueta con ;)
       let matchesCategory = false;
       if (selectedCategory === "Todos") {
         matchesCategory = true;
       } else {
-        const cardCatsString = card.category || "General";
-        // Convertimos la categoría de la tarjeta en un array de etiquetas
-        const cardTags = cardCatsString.split(',').map(t => t.trim());
-        // Comprobamos si la categoría seleccionada está en ese array
+        const rawCat = card.category || "General";
+        // Convertimos a array usando ;
+        const cardTags = rawCat.toString().split(';').map(t => t.trim());
         matchesCategory = cardTags.includes(selectedCategory);
       }
 
@@ -288,7 +291,7 @@ export default function App() {
             {loading ? (
                <div className="text-center py-20 text-slate-400 animate-pulse">Cargando...</div>
             ) : filteredCards.length === 0 ? (
-              <div className="text-center py-20 text-slate-400">No hay tarjetas.</div>
+              <div className="text-center py-20 text-slate-400">No hay tarjetas para esta selección.</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredCards.map(card => (
@@ -539,8 +542,8 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
 
   const displayText = showDiacritics ? data.arabic : removeDiacritics(data.arabic);
   
-  // Procesamos las categorías para visualizarlas bonitas
-  const tags = data.category ? data.category.split(',').map(t => t.trim()).filter(Boolean) : ['General'];
+  // Procesamos las categorías con PUNTO Y COMA
+  const tags = data.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
 
   return (
     <div 
@@ -586,10 +589,10 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
         )}
       </div>
 
-      {/* Categorías (Abajo - Estilo Píldoras) */}
-      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center">
+      {/* Categorías (Abajo - Estilo Píldoras para mostrar todas) */}
+      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">
         {tags.map((tag, i) => (
-          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70">
+          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">
             {tag}
           </span>
         ))}
@@ -620,8 +623,11 @@ function CardFormModal({ card, categories, onSave, onClose }) {
         <form onSubmit={(e) => { e.preventDefault(); onSave(formData); }} className="p-6 space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría(s)</label>
-            <p className="text-[10px] text-slate-400 mb-1">Separa con comas para asignar múltiples categorías (ej: Comida, Verbos).</p>
-            <input list="categories-list" type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} placeholder="Ej: Pista 1, Saludos" />
+            <div className="bg-blue-50 text-blue-800 text-xs p-2 rounded mb-2 border border-blue-100 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                <span>Tip: Usa <strong>punto y coma (;)</strong> para asignar múltiples categorías. <br/>Ejemplo: <em>Verbos; Pista 1; Importante</em></span>
+            </div>
+            <input list="categories-list" type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} placeholder="Ej: Pista 1; Saludos" />
             <datalist id="categories-list">{categories.map(cat => <option key={cat} value={cat} />)}</datalist>
           </div>
           <div>
@@ -700,6 +706,7 @@ function SmartImportModal({ onClose, onImport }) {
         4. CATEGORÍA IMPORTANTE: 
            - Si la entrada es una frase completa o una oración larga, sugiérela como categoría "Frases".
            - Si es una palabra suelta, usa su categoría lógica (Animales, Comida...).
+           - Si pertenece a varias categorías, ÚNELAS CON PUNTO Y COMA (;). Ejemplo: "Comida; Verbos"
         5. Ignora ruido y números.
 
         Devuelve JSON válido:
