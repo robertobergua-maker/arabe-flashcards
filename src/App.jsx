@@ -6,7 +6,7 @@ import {
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, Copy, AlertTriangle
+  Settings, Copy, AlertTriangle, Layers
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -14,13 +14,11 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.vers
 
 // --- UTILIDADES ---
 
-// Quitar diacríticos para búsqueda
 const removeDiacritics = (text) => {
   if (!text) return "";
   return text.replace(/[\u064B-\u065F\u0670]/g, '');
 };
 
-// Barajar array
 const shuffleArray = (array) => {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
@@ -30,7 +28,6 @@ const shuffleArray = (array) => {
   return newArray;
 };
 
-// Limpieza de Nunación (Tanwin) - Versión JS
 const EXCEPTION_WORDS = [
     "شكراً", "جداً", "أبداً", "حالاً", "طبعاً", "عموماً", 
     "يومياً", "مثلاً", "فعلاً", "تقريباً", "أهلاً", "سهلاً",
@@ -41,17 +38,14 @@ const cleanNunationText = (text) => {
   if (!text) return "";
   const words = text.split(" ");
   const cleanedWords = words.map(word => {
-    // Chequear excepciones (quitando signos de puntuación básicos para comparar)
     const cleanCheck = word.replace(/[.،]/g, "");
     if (EXCEPTION_WORDS.some(ex => cleanCheck.includes(ex))) {
       return word;
     }
-    // Regex para Tanwin (Fathatan, Dammatan, Kasratan) al final de la palabra
     return word.replace(/[\u064B\u064C\u064D]+$/g, "");
   });
   return cleanedWords.join(" ");
 };
-
 
 export default function App() {
   const [cards, setCards] = useState([]);
@@ -79,7 +73,8 @@ export default function App() {
       const { data, error } = await supabase
         .from('flashcards')
         .select('*')
-        .order('id', { ascending: false });
+        .order('id', { ascending: false })
+        .range(0, 9999); // Carga todas las tarjetas sin límite
 
       if (error) throw error;
       setCards(data);
@@ -90,7 +85,6 @@ export default function App() {
     }
   }
 
-  // --- GESTIÓN DEL MODO ADMIN ---
   const handleAdminToggle = () => {
     if (isAdminMode) {
       setIsAdminMode(false);
@@ -171,9 +165,7 @@ export default function App() {
     const cats = new Set(cards.map(c => c.category).filter(Boolean));
     const allCats = Array.from(cats);
     
-    // Filtros especiales
     const pistaCats = allCats.filter(c => c.toLowerCase().startsWith('pista'));
-    // Aseguramos que "Frases" aparezca si existe
     const frasesCat = allCats.find(c => c === "Frases");
     const otherCats = allCats.filter(c => !c.toLowerCase().startsWith('pista') && c !== "Frases");
 
@@ -184,7 +176,6 @@ export default function App() {
     });
     otherCats.sort((a, b) => a.localeCompare(b));
 
-    // Orden: Todos -> Pistas -> Frases -> Resto
     const result = ["Todos", ...pistaCats];
     if (frasesCat) result.push("Frases");
     return [...result, ...otherCats];
@@ -333,45 +324,47 @@ export default function App() {
   );
 }
 
-// --- MODAL DE MANTENIMIENTO BD (NUEVO) ---
+// --- MODAL DE MANTENIMIENTO BD ---
 function MaintenanceModal({ onClose, cards, refreshCards }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
-  const [activeTab, setActiveTab] = useState('phrases'); // 'phrases' | 'audit'
+  const [activeTab, setActiveTab] = useState('phrases'); 
   const [loading, setLoading] = useState(false);
   const [logs, setLogs] = useState([]);
   const [auditResults, setAuditResults] = useState([]);
+  const [duplicateGroups, setDuplicateGroups] = useState([]);
 
-  // --- 1. GENERAR FRASES ---
+  useEffect(() => {
+    if (activeTab === 'duplicates') {
+      const groups = {};
+      cards.forEach(c => {
+        if (!c.arabic) return;
+        const key = c.arabic.trim();
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(c);
+      });
+      const dups = Object.values(groups).filter(g => g.length > 1);
+      setDuplicateGroups(dups);
+    }
+  }, [activeTab, cards]);
+
   const handleGeneratePhraseCopies = async () => {
     if (!window.confirm("Se buscarán entradas con más de una palabra y se crearán copias en la categoría 'Frases'. ¿Continuar?")) return;
     setLoading(true);
     setLogs(["Iniciando análisis..."]);
 
     try {
-      // Identificar frases (más de 1 palabra en árabe) que NO estén ya en categoría "Frases"
-      const candidates = cards.filter(c => 
-        c.category !== "Frases" && 
-        c.arabic && 
-        c.arabic.trim().includes(" ") // Detector simple de frase
-      );
-
-      // Identificar frases que YA existen en la categoría "Frases" para no duplicar de nuevo
-      const existingPhrases = new Set(
-        cards
-          .filter(c => c.category === "Frases")
-          .map(c => c.arabic.trim())
-      );
+      const candidates = cards.filter(c => c.category !== "Frases" && c.arabic && c.arabic.trim().includes(" "));
+      const existingPhrases = new Set(cards.filter(c => c.category === "Frases").map(c => c.arabic.trim()));
 
       const toCreate = [];
       candidates.forEach(c => {
         if (!existingPhrases.has(c.arabic.trim())) {
-          toCreate.push({
-            category: "Frases",
-            spanish: c.spanish,
-            arabic: c.arabic,
-            phonetic: c.phonetic
+          toCreate.push({ 
+            category: "Frases", 
+            spanish: c.spanish, 
+            arabic: c.arabic, 
+            phonetic: c.phonetic 
           });
-          // Añadimos al Set temporal para evitar duplicados en el mismo lote
           existingPhrases.add(c.arabic.trim());
         }
       });
@@ -385,7 +378,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
         setLogs(prev => [...prev, "✅ ¡Hecho! Refrescando base de datos..."]);
         await refreshCards();
       }
-
     } catch (error) {
       setLogs(prev => [...prev, `❌ Error: ${error.message}`]);
     } finally {
@@ -393,17 +385,15 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     }
   };
 
-  // --- 2. LIMPIEZA NUNACIÓN ---
   const handleCleanNunation = async () => {
     setLoading(true);
     setLogs(["Analizando nunaciones..."]);
     let changes = 0;
-
     try {
       for (const card of cards) {
-        const original = card.arabic;
-        const clean = cleanNunationText(original);
-        if (original !== clean) {
+        if (!card.arabic) continue;
+        const clean = cleanNunationText(card.arabic);
+        if (card.arabic !== clean) {
           await supabase.from('flashcards').update({ arabic: clean }).eq('id', card.id);
           changes++;
         }
@@ -417,22 +407,16 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     }
   };
 
-  // --- 3. AUDITORÍA IA (Solo Traducción) ---
   const handleAudit = async () => {
     if (!apiKey) { alert("Necesitas la API Key de OpenAI"); return; }
     setLoading(true);
     setAuditResults([]);
-    setLogs(["Consultando a la IA (esto puede tardar)..."]);
+    setLogs(["Consultando a la IA..."]);
 
     try {
         const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
-        
-        // Enviamos lotes de 20 para no saturar
         const batchSize = 20;
         let allIssues = [];
-
-        // Cogemos solo los primeros 100 para no gastar mucha API de golpe en esta demo
-        // Quita el .slice(0, 100) si quieres auditar TODAS
         const cardsToAudit = cards.slice(0, 100); 
 
         for (let i = 0; i < cardsToAudit.length; i += batchSize) {
@@ -441,32 +425,24 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
 
             const prompt = `
             Actúa como experto en árabe. Revisa estas tarjetas.
-            IGNORA LA CATEGORÍA. IGNORA DUPLICADOS.
-            SOLO reporta si la TRADUCCIÓN (Arabic <-> Spanish) es claramente INCORRECTA.
-            
+            IGNORA CATEGORÍA Y DUPLICADOS. SOLO revisa traducción Arabic <-> Spanish.
             Datos: ${JSON.stringify(miniBatch)}
-            
             Devuelve JSON: [{ "id": 1, "problem": "Explica el error", "suggestion": "Traducción correcta" }]
-            Si todo está bien, devuelve [].
+            Si todo bien, devuelve [].
             `;
 
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: [{ role: "user", content: prompt }]
             });
-
             const content = response.choices[0].message.content.replace(/```json|```/g, "").trim();
-            const issues = JSON.parse(content);
-            allIssues = [...allIssues, ...issues];
+            allIssues = [...allIssues, ...JSON.parse(content)];
         }
-
-        if (allIssues.length === 0) {
-            setLogs(prev => [...prev, "🎉 La IA dice que las traducciones analizadas están perfectas."]);
-        } else {
+        if (allIssues.length === 0) setLogs(prev => [...prev, "🎉 Traducciones perfectas según la IA."]);
+        else {
             setAuditResults(allIssues);
-            setLogs(prev => [...prev, `⚠️ Se encontraron ${allIssues.length} posibles errores.`]);
+            setLogs(prev => [...prev, `⚠️ Se encontraron ${allIssues.length} errores.`]);
         }
-
     } catch (error) {
         setLogs(prev => [...prev, `❌ Error IA: ${error.message}`]);
     } finally {
@@ -475,70 +451,46 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
   };
 
   const handleApplyFix = async (issue) => {
-    try {
-        await supabase.from('flashcards').update({ spanish: issue.suggestion }).eq('id', issue.id);
-        setAuditResults(prev => prev.filter(p => p.id !== issue.id)); // Quitar de la lista
-        await refreshCards();
-    } catch (error) {
-        alert("Error al aplicar: " + error.message);
-    }
+    await supabase.from('flashcards').update({ spanish: issue.suggestion }).eq('id', issue.id);
+    setAuditResults(prev => prev.filter(p => p.id !== issue.id));
+    await refreshCards();
   };
 
-  const handleDismiss = (id) => {
-    setAuditResults(prev => prev.filter(p => p.id !== id));
+  const handleDeleteDuplicate = async (id) => {
+    if(!confirm("¿Borrar esta copia?")) return;
+    await supabase.from('flashcards').delete().eq('id', id);
+    await refreshCards();
   };
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <div className="bg-blue-700 px-6 py-4 flex justify-between items-center text-white shrink-0">
-          <h2 className="text-lg font-bold flex items-center gap-2"><Settings className="w-5 h-5" /> Mantenimiento de Base de Datos</h2>
+          <h2 className="text-lg font-bold flex items-center gap-2"><Settings className="w-5 h-5" /> Mantenimiento BD</h2>
           <button onClick={onClose} className="hover:bg-blue-600 p-1 rounded transition"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="flex border-b border-slate-200">
-            <button onClick={() => setActiveTab('phrases')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'phrases' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>
-                1. Gestión de Frases y Limpieza
-            </button>
-            <button onClick={() => setActiveTab('audit')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'audit' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>
-                2. Auditoría Traducción (IA)
-            </button>
+        <div className="flex border-b border-slate-200 overflow-x-auto">
+            <button onClick={() => setActiveTab('phrases')} className={`px-6 py-3 font-bold text-sm whitespace-nowrap ${activeTab === 'phrases' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>1. Limpieza</button>
+            <button onClick={() => setActiveTab('audit')} className={`px-6 py-3 font-bold text-sm whitespace-nowrap ${activeTab === 'audit' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>2. Auditoría IA</button>
+            <button onClick={() => setActiveTab('duplicates')} className={`px-6 py-3 font-bold text-sm whitespace-nowrap ${activeTab === 'duplicates' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>3. Duplicados ({duplicateGroups.length})</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
-            
-            {/* TAB 1: HERRAMIENTAS RÁPIDAS */}
+            {/* TAB 1: LIMPIEZA */}
             {activeTab === 'phrases' && (
                 <div className="space-y-6">
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <h3 className="font-bold text-lg mb-2 flex items-center gap-2 text-slate-700"><Copy className="w-5 h-5 text-blue-500"/> Generador de Categoría "Frases"</h3>
-                        <p className="text-sm text-slate-500 mb-4">Busca todas las entradas que tengan más de una palabra y crea una <strong>copia</strong> en la categoría "Frases" (sin borrar la original).</p>
-                        <button 
-                            onClick={handleGeneratePhraseCopies} 
-                            disabled={loading}
-                            className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50"
-                        >
-                            {loading ? "Procesando..." : "Detectar y Copiar Frases"}
-                        </button>
+                        <h3 className="font-bold text-lg mb-2 flex items-center gap-2 text-slate-700"><Copy className="w-5 h-5 text-blue-500"/> Copiar a "Frases"</h3>
+                        <p className="text-sm text-slate-500 mb-4">Detecta frases y crea copias en su categoría.</p>
+                        <button onClick={handleGeneratePhraseCopies} disabled={loading} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-blue-700 disabled:opacity-50">{loading ? "..." : "Detectar Frases"}</button>
                     </div>
-
                     <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <h3 className="font-bold text-lg mb-2 flex items-center gap-2 text-slate-700"><Type className="w-5 h-5 text-orange-500"/> Limpiador de Nunación</h3>
-                        <p className="text-sm text-slate-500 mb-4">Elimina vocales finales innecesarias (tanwin) de toda la base de datos, respetando excepciones como "Shukran".</p>
-                        <button 
-                            onClick={handleCleanNunation}
-                            disabled={loading}
-                            className="bg-orange-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-orange-700 disabled:opacity-50"
-                        >
-                            {loading ? "Limpiando..." : "Ejecutar Limpieza"}
-                        </button>
+                        <h3 className="font-bold text-lg mb-2 flex items-center gap-2 text-slate-700"><Type className="w-5 h-5 text-orange-500"/> Limpiar Nunación</h3>
+                        <p className="text-sm text-slate-500 mb-4">Elimina tanwin final salvo excepciones.</p>
+                        <button onClick={handleCleanNunation} disabled={loading} className="bg-orange-600 text-white px-4 py-2 rounded-lg font-bold hover:bg-orange-700 disabled:opacity-50">{loading ? "..." : "Ejecutar Limpieza"}</button>
                     </div>
-
-                    {logs.length > 0 && (
-                        <div className="bg-black/80 text-green-400 font-mono text-xs p-4 rounded-lg h-40 overflow-y-auto">
-                            {logs.map((log, i) => <div key={i}>{log}</div>)}
-                        </div>
-                    )}
+                    {logs.length > 0 && <div className="bg-black/80 text-green-400 font-mono text-xs p-4 rounded-lg h-40 overflow-y-auto">{logs.map((log, i) => <div key={i}>{log}</div>)}</div>}
                 </div>
             )}
 
@@ -547,22 +499,9 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                 <div className="space-y-4">
                     <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 mb-4">
                         <label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label>
-                        <input 
-                          type="password" 
-                          placeholder="sk-..." 
-                          className="w-full p-2 border border-purple-200 rounded bg-white text-sm"
-                          value={apiKey}
-                          onChange={(e) => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }}
-                        />
-                        <button 
-                            onClick={handleAudit}
-                            disabled={loading || !apiKey}
-                            className="mt-3 w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50"
-                        >
-                            {loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "🔍 Iniciar Búsqueda de Errores"}
-                        </button>
+                        <input type="password" placeholder="sk-..." className="w-full p-2 border border-purple-200 rounded bg-white text-sm" value={apiKey} onChange={(e) => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }} />
+                        <button onClick={handleAudit} disabled={loading || !apiKey} className="mt-3 w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50">{loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "🔍 Iniciar Auditoría"}</button>
                     </div>
-
                     {auditResults.length > 0 ? (
                         <div className="space-y-3">
                             {auditResults.map(issue => {
@@ -571,30 +510,67 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                                     <div key={issue.id} className="bg-white p-4 rounded-lg shadow border-l-4 border-red-500 flex flex-col gap-2">
                                         <div className="flex justify-between items-start">
                                             <div>
-                                                <h4 className="font-bold text-red-600 flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Traducción Sospechosa</h4>
-                                                <p className="text-sm font-arabic text-right mt-1 text-slate-700 text-lg" dir="rtl">{originalCard?.arabic}</p>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-600 rounded uppercase font-bold tracking-wider">{originalCard?.category || 'SIN CAT'}</span>
+                                                </div>
+                                                <h4 className="font-bold text-red-600 flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Traducción Dudosa</h4>
+                                                <p className="text-lg font-arabic text-right mt-1 text-slate-700" dir="rtl">{originalCard?.arabic}</p>
                                                 <p className="text-xs text-slate-400">Actual: {originalCard?.spanish}</p>
                                             </div>
-                                            <button onClick={() => handleDismiss(issue.id)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
+                                            <button onClick={() => setAuditResults(prev => prev.filter(p => p.id !== issue.id))} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
                                         </div>
                                         <div className="bg-green-50 p-2 rounded text-sm text-green-800">
-                                            <strong>Sugerencia IA:</strong> {issue.suggestion}
+                                            <strong>Sugerencia:</strong> {issue.suggestion}
                                             <p className="text-xs mt-1 opacity-75">{issue.problem}</p>
                                         </div>
-                                        <button 
-                                            onClick={() => handleApplyFix(issue)}
-                                            className="bg-green-600 text-white text-sm py-1 px-3 rounded hover:bg-green-700 self-end"
-                                        >
-                                            Aplicar Corrección
-                                        </button>
+                                        <button onClick={() => handleApplyFix(issue)} className="bg-green-600 text-white text-sm py-1 px-3 rounded hover:bg-green-700 self-end">Corregir</button>
                                     </div>
                                 );
                             })}
                         </div>
+                    ) : <div className="text-center text-slate-400 py-10">{loading ? "Analizando..." : "Sin errores detectados."}</div>}
+                </div>
+            )}
+
+            {/* TAB 3: DUPLICADOS */}
+            {activeTab === 'duplicates' && (
+                <div className="space-y-6">
+                    {duplicateGroups.length === 0 ? (
+                         <div className="text-center text-slate-400 py-10 flex flex-col items-center">
+                            <CheckCircle className="w-12 h-12 mb-2 opacity-20"/>
+                            <p>¡Limpio! No se encontraron duplicados exactos en árabe.</p>
+                         </div>
                     ) : (
-                        <div className="text-center text-slate-400 py-10">
-                            {loading ? "Analizando..." : "Aquí aparecerán los errores detectados."}
-                        </div>
+                        duplicateGroups.map((group, idx) => (
+                            <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center">
+                                    <span className="font-bold text-slate-600 text-sm">Conflicto #{idx+1}</span>
+                                    <span className="font-arabic text-lg text-emerald-700 font-bold" dir="rtl">{group[0].arabic}</span>
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                    {group.map(card => (
+                                        <div key={card.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
+                                            <div className="flex items-center gap-3">
+                                                <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wider w-24 text-center truncate ${card.category === 'Frases' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
+                                                    {card.category || 'GENERAL'}
+                                                </span>
+                                                <div className="flex flex-col">
+                                                    <span className="font-bold text-slate-800">{card.spanish}</span>
+                                                    <span className="text-xs text-slate-400 font-mono">{card.phonetic}</span>
+                                                </div>
+                                            </div>
+                                            <button 
+                                                onClick={() => handleDeleteDuplicate(card.id)}
+                                                className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                                                title="Borrar esta versión"
+                                            >
+                                                <Trash2 className="w-5 h-5" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))
                     )}
                 </div>
             )}
@@ -604,7 +580,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
   );
 }
 
-// --- COMPONENTES PRINCIPALES (Sin cambios grandes) ---
+// --- COMPONENTE FLASHCARD (MODIFICADO: Categoría abajo) ---
 function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
   const [flipState, setFlipState] = useState(0);
   useEffect(() => { setFlipState(0); }, [frontLanguage]);
@@ -634,16 +610,18 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
       onClick={handleNextFace}
       className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group ${getCardStyle()}`}
     >
+      {/* Botones Admin */}
       {isAdmin && (
         <div className="absolute top-2 right-2 flex gap-2 z-10">
           <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
           <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
         </div>
       )}
-      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2">
+
+      {/* Contenido Principal */}
+      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
         {isAdmin ? (
           <>
-            <span className="text-[10px] bg-slate-100 px-2 py-1 rounded text-slate-500 font-mono mb-1 truncate max-w-full">{data.category}</span>
             <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{data.spanish}</h3>
             <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayText}</h3>
             <p className="text-sm font-mono text-amber-700 italic opacity-80">{data.phonetic}</p>
@@ -670,11 +648,13 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
           </>
         )}
       </div>
-      {!isAdmin && (
-        <div className="mt-auto pt-2 text-[10px] uppercase tracking-widest opacity-30 font-bold">
-          {flipState === 0 ? "Ver reverso" : flipState === 1 ? "Ver fonética" : "Reiniciar"}
-        </div>
-      )}
+
+      {/* Categoría (Abajo, sustituyendo leyendas) */}
+      <div className="mt-auto pt-2 pb-1 text-center">
+        <span className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70">
+          {data.category || 'General'}
+        </span>
+      </div>
     </div>
   );
 }
