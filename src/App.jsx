@@ -6,7 +6,7 @@ import {
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, AlertTriangle, Layers
+  Settings, AlertTriangle, ArrowRight, Check
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -31,7 +31,7 @@ const shuffleArray = (array) => {
 export default function App() {
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [loadingProgress, setLoadingProgress] = useState(""); // Nuevo estado para feedback de carga
+  const [loadingProgress, setLoadingProgress] = useState(""); 
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   const [frontLanguage, setFrontLanguage] = useState("spanish");
@@ -44,7 +44,7 @@ export default function App() {
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
 
-  // --- CARGAR DATOS (PAGINACIÓN ROBUSTA) ---
+  // --- CARGAR DATOS (PAGINACIÓN BLINDADA) ---
   useEffect(() => {
     fetchAllCards();
   }, []);
@@ -56,9 +56,10 @@ export default function App() {
       let page = 0;
       const pageSize = 1000;
       let hasMore = true;
+      let safetyCounter = 0; 
 
-      while (hasMore) {
-        setLoadingProgress(`Cargando bloque ${page + 1}... (${allData.length} tarjetas)`);
+      while (hasMore && safetyCounter < 50) {
+        setLoadingProgress(`Cargando... (${allData.length} tarjetas)`);
         
         const { data, error } = await supabase
           .from('flashcards')
@@ -70,18 +71,17 @@ export default function App() {
 
         if (data && data.length > 0) {
           allData = [...allData, ...data];
-          // Si recibimos menos filas que el tamaño de página, es que ya no hay más
-          if (data.length < pageSize) {
-            hasMore = false;
-          } else {
-            page++;
-          }
+          if (data.length < pageSize) hasMore = false;
+          else page++;
         } else {
           hasMore = false;
         }
+        safetyCounter++;
       }
 
-      setCards(allData);
+      // Eliminar duplicados por ID (por seguridad)
+      const uniqueCards = Array.from(new Map(allData.map(item => [item.id, item])).values());
+      setCards(uniqueCards);
     } catch (error) {
       console.error("Error cargando tarjetas:", error.message);
       alert("Error de conexión: " + error.message);
@@ -114,12 +114,12 @@ export default function App() {
             phonetic: cardData.phonetic
           }).eq('id', cardData.id);
         if (error) throw error;
-        setCards(cards.map(c => c.id === cardData.id ? cardData : c));
+        setCards(prev => prev.map(c => c.id === cardData.id ? cardData : c));
       } else {
         const { id, ...newCardData } = cardData;
         const { data, error } = await supabase.from('flashcards').insert([newCardData]).select();
         if (error) throw error;
-        if (data) setCards([data[0], ...cards]);
+        if (data) setCards(prev => [data[0], ...prev]);
       }
       setIsFormOpen(false);
       setEditingCard(null);
@@ -136,12 +136,10 @@ export default function App() {
         arabic: c.arabic,
         phonetic: c.phonetic
       }));
-      
       const { data, error } = await supabase.from('flashcards').insert(cleanCards).select();
-
       if (error) throw error;
       if (data) {
-        setCards([...data, ...cards]);
+        setCards(prev => [...data, ...prev]);
         alert(`¡${data.length} tarjetas importadas con éxito!`);
         setIsSmartImportOpen(false);
       }
@@ -156,7 +154,7 @@ export default function App() {
     try {
       const { error } = await supabase.from('flashcards').delete().eq('id', id);
       if (error) throw error;
-      setCards(cards.filter(c => c.id !== id));
+      setCards(prev => prev.filter(c => c.id !== id));
     } catch (error) {
       alert("Error al borrar: " + error.message);
     }
@@ -166,72 +164,44 @@ export default function App() {
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
-  // --- LÓGICA DE CATEGORÍAS (MULTICATEGORÍA CON PUNTO Y COMA ;) ---
   const categories = useMemo(() => {
     const allTags = new Set();
-
     cards.forEach(card => {
-      // Si no tiene categoría, la marcamos como General
-      if (!card.category) {
-        allTags.add("General");
-        return;
-      }
-      
-      // DIVIDIMOS SOLO POR PUNTO Y COMA (;)
-      // Esto permite que "Pista 29: El trabajo, las profesiones" se mantenga como UNA sola categoría
-      // Pero "Comida; Verbos" se convierta en DOS.
+      if (!card.category) { allTags.add("General"); return; }
       const tags = card.category.toString().split(';');
-      
       tags.forEach(tag => {
         const cleanTag = tag.trim();
-        if (cleanTag.length > 0) {
-          allTags.add(cleanTag);
-        }
+        if (cleanTag.length > 0) allTags.add(cleanTag);
       });
     });
-
     const uniqueCats = Array.from(allTags);
-    
-    // Filtro Pistas vs Resto
     const pistaCats = uniqueCats.filter(c => c.toLowerCase().startsWith('pista'));
     const otherCats = uniqueCats.filter(c => !c.toLowerCase().startsWith('pista'));
-
-    // Ordenar Pistas por número
     pistaCats.sort((a, b) => {
       const numA = parseInt(a.match(/\d+/)?.[0] || 0);
       const numB = parseInt(b.match(/\d+/)?.[0] || 0);
       return numA - numB;
     });
-
-    // Ordenar resto alfabéticamente
     otherCats.sort((a, b) => a.localeCompare(b));
-
     return ["Todos", ...pistaCats, ...otherCats];
   }, [cards]);
 
   const filteredCards = useMemo(() => {
     let result = cards.filter(card => {
-      // 1. Filtro de texto
       const s = (card.spanish || "").toLowerCase();
       const a = removeDiacritics(card.arabic || "");
       const term = searchTerm.toLowerCase();
       const matchesSearch = s.includes(term) || a.includes(term);
-
-      // 2. Filtro de Categoría (Lógica Multietiqueta con ;)
       let matchesCategory = false;
       if (selectedCategory === "Todos") {
         matchesCategory = true;
       } else {
         const rawCat = card.category || "General";
-        // Convertimos la cadena de la DB en array de etiquetas
         const cardTags = rawCat.toString().split(';').map(t => t.trim());
-        // Verificamos si la categoría seleccionada está en ese array
         matchesCategory = cardTags.includes(selectedCategory);
       }
-
       return matchesSearch && matchesCategory;
     });
-
     if (selectedCategory === "Todos" && searchTerm === "") {
       return shuffleArray(result);
     }
@@ -258,20 +228,12 @@ export default function App() {
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
-
             <div className="relative md:w-64">
                 <Filter className="absolute left-3 top-2.5 w-4 h-4 text-white/50 pointer-events-none" />
-                <select
-                    value={selectedCategory}
-                    onChange={(e) => setSelectedCategory(e.target.value)}
-                    className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 text-sm text-white appearance-none cursor-pointer"
-                >
-                    {categories.map(cat => (
-                        <option key={cat} value={cat} className="text-slate-800 bg-white">{cat}</option>
-                    ))}
+                <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 text-sm text-white appearance-none cursor-pointer">
+                    {categories.map(cat => <option key={cat} value={cat} className="text-slate-800 bg-white">{cat}</option>)}
                 </select>
             </div>
-
             <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
                 <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
                 <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
@@ -279,98 +241,36 @@ export default function App() {
                     <Type className="w-3.5 h-3.5" />
                 </button>
             </div>
-
-            <button 
-              onClick={handleAdminToggle}
-              className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-black/20 hover:bg-black/30 text-white/70'}`}
-              title={isAdminMode ? "Salir de modo edición" : "Entrar en modo edición"}
-            >
+            <button onClick={handleAdminToggle} className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-black/20 hover:bg-black/30 text-white/70'}`}>
               {isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
             </button>
           </div>
         </div>
       </header>
-
       <div className="flex-1 overflow-y-auto bg-slate-100 p-4 md:p-8">
           <div className="max-w-6xl mx-auto">
             {isAdminMode && (
               <div className="mb-6 flex flex-wrap justify-center gap-4 animate-fade-in-up">
-                <button 
-                  onClick={openNewCardModal}
-                  className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-full shadow-lg hover:bg-emerald-700 hover:scale-105 transition-all font-bold"
-                >
-                  <Plus className="w-5 h-5" /> Añadir Manual
-                </button>
-                <button 
-                  onClick={() => setIsSmartImportOpen(true)}
-                  className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg hover:bg-purple-700 hover:scale-105 transition-all font-bold"
-                >
-                  <Wand2 className="w-5 h-5" /> Importar con IA
-                </button>
-                <button 
-                  onClick={() => setIsMaintenanceOpen(true)}
-                  className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 hover:scale-105 transition-all font-bold"
-                >
-                  <Settings className="w-5 h-5" /> Mantenimiento BD
-                </button>
+                <button onClick={openNewCardModal} className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-full shadow-lg hover:bg-emerald-700 hover:scale-105 transition-all font-bold"><Plus className="w-5 h-5" /> Añadir Manual</button>
+                <button onClick={() => setIsSmartImportOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg hover:bg-purple-700 hover:scale-105 transition-all font-bold"><Wand2 className="w-5 h-5" /> Importar con IA</button>
+                <button onClick={() => setIsMaintenanceOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 hover:scale-105 transition-all font-bold"><Settings className="w-5 h-5" /> Mantenimiento BD</button>
               </div>
             )}
-
             {loading ? (
-               <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3">
-                 <Loader2 className="w-8 h-8 animate-spin text-emerald-600" />
-                 <span className="font-medium animate-pulse">{loadingProgress || "Conectando..."}</span>
-               </div>
+               <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-3"><Loader2 className="w-8 h-8 animate-spin text-emerald-600" /><span className="font-medium animate-pulse">{loadingProgress || "Conectando..."}</span></div>
             ) : filteredCards.length === 0 ? (
               <div className="text-center py-20 text-slate-400">No hay tarjetas para esta selección.</div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {filteredCards.map(card => (
-                  <Flashcard 
-                    key={card.id} 
-                    data={card} 
-                    frontLanguage={frontLanguage} 
-                    showDiacritics={showDiacritics}
-                    isAdmin={isAdminMode}
-                    onDelete={() => handleDeleteCard(card.id)}
-                    onEdit={() => openEditCardModal(card)}
-                  />
-                ))}
+                {filteredCards.map(card => <Flashcard key={card.id} data={card} frontLanguage={frontLanguage} showDiacritics={showDiacritics} isAdmin={isAdminMode} onDelete={() => handleDeleteCard(card.id)} onEdit={() => openEditCardModal(card)} />)}
               </div>
             )}
-            
-            {/* DEBUG: Contador discreto para verificar carga completa */}
-            {!loading && (
-                <div className="mt-8 text-center text-[10px] text-slate-300 font-mono">
-                    Total Tarjetas: {cards.length} | Categorías: {categories.length - 1}
-                </div>
-            )}
+            {!loading && <div className="mt-8 text-center text-[10px] text-slate-300 font-mono">Total Tarjetas: {cards.length} | Categorías: {categories.length - 1}</div>}
           </div>
       </div>
-
-      {isFormOpen && (
-        <CardFormModal 
-          card={editingCard} 
-          categories={categories.filter(c => c !== "Todos")} 
-          onSave={handleSaveCard} 
-          onClose={() => setIsFormOpen(false)} 
-        />
-      )}
-
-      {isSmartImportOpen && (
-        <SmartImportModal 
-          onClose={() => setIsSmartImportOpen(false)}
-          onImport={handleBulkImport}
-        />
-      )}
-
-      {isMaintenanceOpen && (
-        <MaintenanceModal 
-          onClose={() => setIsMaintenanceOpen(false)}
-          cards={cards}
-          refreshCards={fetchAllCards}
-        />
-      )}
+      {isFormOpen && <CardFormModal card={editingCard} categories={categories.filter(c => c !== "Todos")} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
+      {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} onImport={handleBulkImport} />}
+      {isMaintenanceOpen && <MaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} refreshCards={fetchAllCards} />}
     </div>
   );
 }
@@ -402,49 +302,93 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     if (!apiKey) { alert("Necesitas la API Key de OpenAI"); return; }
     setLoading(true);
     setAuditResults([]);
-    setLogs(["Consultando a la IA..."]);
+    setLogs(["Iniciando auditoría lingüística..."]);
 
     try {
         const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
         const batchSize = 20;
         let allIssues = [];
-        const cardsToAudit = cards.slice(0, 100); 
-
+        // Analizamos TODAS las tarjetas (puedes reducirlo con slice si quieres probar primero)
+        const cardsToAudit = cards; 
+        
         for (let i = 0; i < cardsToAudit.length; i += batchSize) {
             const batch = cardsToAudit.slice(i, i + batchSize);
+            setLogs(prev => [`Analizando bloque ${i} - ${i+batchSize}...`, ...prev.slice(0,4)]);
+            
             const miniBatch = batch.map(c => ({ id: c.id, arabic: c.arabic, spanish: c.spanish }));
 
             const prompt = `
-            Actúa como experto en árabe. Revisa estas tarjetas.
-            IGNORA CATEGORÍA Y DUPLICADOS. SOLO revisa traducción Arabic <-> Spanish.
-            Datos: ${JSON.stringify(miniBatch)}
-            Devuelve JSON: [{ "id": 1, "problem": "Explica el error", "suggestion": "Traducción correcta" }]
-            Si todo bien, devuelve [].
+            Eres un experto lingüista árabe-español. Audita estas flashcards.
+            
+            REGLAS ESTRICTAS DE NUNACIÓN (TANWIN):
+            1. ELIMINA SIEMPRE el Tanwin Damma (un - ٌ ) y Tanwin Kasra (in - ِ ). Usamos forma pausal.
+            2. MANTÉN el Tanwin Fath (an - ً ) SOLO si es un adverbio fosilizado (ej: Shukran, Jiddan, Tabaan, Aydan, Masalan, Afwan...).
+            3. Si es un sustantivo común con Tanwin Fath innecesario, SUGIERE ELIMINARLO.
+            
+            REGLAS DE TRADUCCIÓN:
+            1. Verifica concordancia de género/número.
+            2. Mejora la traducción si es incorrecta.
+            
+            FORMATO:
+            Devuelve SOLO un array JSON válido sin texto adicional.
+            Estructura: [{ "id": 123, "problem": "Explica error", "suggestion": "Nueva versión árabe o español", "field": "arabic/spanish" }]
+            Si la tarjeta está bien, ignórala.
+            
+            DATOS: ${JSON.stringify(miniBatch)}
             `;
 
             const response = await openai.chat.completions.create({
                 model: "gpt-4o",
-                messages: [{ role: "user", content: prompt }]
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.2
             });
-            const content = response.choices[0].message.content.replace(/```json|```/g, "").trim();
-            allIssues = [...allIssues, ...JSON.parse(content)];
+
+            // PARSEO ROBUSTO: Busca el primer '[' y el último ']'
+            let rawContent = response.choices[0].message.content;
+            const start = rawContent.indexOf('[');
+            const end = rawContent.lastIndexOf(']');
+            
+            if (start !== -1 && end !== -1) {
+                const jsonStr = rawContent.substring(start, end + 1);
+                const batchIssues = JSON.parse(jsonStr);
+                allIssues = [...allIssues, ...batchIssues];
+            }
         }
-        if (allIssues.length === 0) setLogs(prev => [...prev, "🎉 Traducciones perfectas según la IA."]);
-        else {
+
+        if (allIssues.length === 0) {
+            setLogs(prev => ["🎉 ¡Increíble! No se detectaron errores.", ...prev]);
+        } else {
             setAuditResults(allIssues);
-            setLogs(prev => [...prev, `⚠️ Se encontraron ${allIssues.length} errores.`]);
+            setLogs(prev => [`✅ Auditoría terminada. ${allIssues.length} sugerencias encontradas.`, ...prev]);
         }
     } catch (error) {
-        setLogs(prev => [...prev, `❌ Error IA: ${error.message}`]);
+        console.error(error);
+        setLogs(prev => [`❌ Error crítico: ${error.message}`, ...prev]);
     } finally {
         setLoading(false);
     }
   };
 
   const handleApplyFix = async (issue) => {
-    await supabase.from('flashcards').update({ spanish: issue.suggestion }).eq('id', issue.id);
-    setAuditResults(prev => prev.filter(p => p.id !== issue.id));
-    await refreshCards();
+    try {
+      const updateData = {};
+      if (issue.field === 'arabic' || !issue.field) updateData.arabic = issue.suggestion;
+      if (issue.field === 'spanish') updateData.spanish = issue.suggestion; // Por si la corrección es en español
+
+      // Si la IA no especifica campo, asumimos que es una corrección general (usualmente árabe en este caso)
+      // Pero mejor verificamos si la sugerencia parece árabe o español
+      if (!issue.field) {
+         // Simple check: contiene caracteres árabes?
+         if (/[\u0600-\u06FF]/.test(issue.suggestion)) updateData.arabic = issue.suggestion;
+         else updateData.spanish = issue.suggestion;
+      }
+
+      await supabase.from('flashcards').update(updateData).eq('id', issue.id);
+      setAuditResults(prev => prev.filter(p => p.id !== issue.id));
+      await refreshCards(); // Refresca la UI
+    } catch (err) {
+      alert("Error aplicando corrección: " + err.message);
+    }
   };
 
   const handleDeleteDuplicate = async (id) => {
@@ -473,37 +417,55 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                     <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 mb-4">
                         <label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label>
                         <input type="password" placeholder="sk-..." className="w-full p-2 border border-purple-200 rounded bg-white text-sm" value={apiKey} onChange={(e) => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }} />
-                        <button onClick={handleAudit} disabled={loading || !apiKey} className="mt-3 w-full bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50">{loading ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : "🔍 Iniciar Auditoría"}</button>
+                        <div className="flex gap-2 mt-3">
+                            <button onClick={handleAudit} disabled={loading || !apiKey} className="flex-1 bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50 flex justify-center gap-2">
+                                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Settings className="w-5 h-5" /> Auditar Todo (Lento)</>}
+                            </button>
+                        </div>
                     </div>
+
+                    {logs.length > 0 && <div className="bg-slate-900 text-green-400 font-mono text-[10px] p-3 rounded-lg max-h-32 overflow-y-auto mb-4 border border-slate-700 shadow-inner">{logs.map((log, i) => <div key={i}>{log}</div>)}</div>}
+
                     {auditResults.length > 0 ? (
                         <div className="space-y-3">
+                            <h3 className="font-bold text-slate-700 flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-amber-500"/> Sugerencias ({auditResults.length})</h3>
                             {auditResults.map(issue => {
                                 const originalCard = cards.find(c => c.id === issue.id);
+                                if (!originalCard) return null;
                                 return (
-                                    <div key={issue.id} className="bg-white p-4 rounded-lg shadow border-l-4 border-red-500 flex flex-col gap-2">
+                                    <div key={issue.id} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex flex-col gap-3 hover:border-purple-300 transition-colors">
                                         <div className="flex justify-between items-start">
-                                            <div>
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <span className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-600 rounded uppercase font-bold tracking-wider">{originalCard?.category || 'SIN CAT'}</span>
-                                                </div>
-                                                <h4 className="font-bold text-red-600 flex items-center gap-2"><AlertTriangle className="w-4 h-4"/> Traducción Dudosa</h4>
-                                                <p className="text-lg font-arabic text-right mt-1 text-slate-700" dir="rtl">{originalCard?.arabic}</p>
-                                                <p className="text-xs text-slate-400">Actual: {originalCard?.spanish}</p>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono">ID: {originalCard.id}</span>
+                                                <span className="text-xs font-bold text-slate-400 uppercase">{originalCard.category?.split(';')[0]}</span>
                                             </div>
-                                            <button onClick={() => setAuditResults(prev => prev.filter(p => p.id !== issue.id))} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4"/></button>
+                                            <button onClick={() => setAuditResults(prev => prev.filter(p => p.id !== issue.id))} className="text-slate-300 hover:text-red-500"><X className="w-4 h-4"/></button>
                                         </div>
-                                        <div className="bg-green-50 p-2 rounded text-sm text-green-800">
-                                            <strong>Sugerencia:</strong> {issue.suggestion}
-                                            <p className="text-xs mt-1 opacity-75">{issue.problem}</p>
+                                        
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="bg-red-50 p-3 rounded border border-red-100 relative">
+                                                <span className="absolute top-1 right-2 text-[10px] font-bold text-red-300">ORIGINAL</span>
+                                                <p className="font-arabic text-xl text-slate-800 text-right mb-1" dir="rtl">{originalCard.arabic}</p>
+                                                <p className="text-sm text-slate-600">{originalCard.spanish}</p>
+                                            </div>
+                                            
+                                            <div className="bg-green-50 p-3 rounded border border-green-100 relative">
+                                                <span className="absolute top-1 right-2 text-[10px] font-bold text-green-600">SUGERENCIA</span>
+                                                <div className="flex flex-col h-full justify-center">
+                                                    <p className="font-bold text-lg text-green-800 text-center">{issue.suggestion}</p>
+                                                    <p className="text-xs text-green-600 text-center mt-1 italic">{issue.problem}</p>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <button onClick={() => handleApplyFix(issue)} className="bg-green-600 text-white text-sm py-1 px-3 rounded hover:bg-green-700 self-end">Corregir</button>
+
+                                        <button onClick={() => handleApplyFix(issue)} className="self-end bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 shadow-sm transition-transform active:scale-95">
+                                            <Check className="w-4 h-4" /> Aplicar Corrección
+                                        </button>
                                     </div>
                                 );
                             })}
                         </div>
-                    ) : <div className="text-center text-slate-400 py-10">{loading ? "Analizando..." : "Sin errores detectados."}</div>}
-                    
-                    {logs.length > 0 && <div className="bg-black/80 text-green-400 font-mono text-xs p-4 rounded-lg h-40 overflow-y-auto mt-4">{logs.map((log, i) => <div key={i}>{log}</div>)}</div>}
+                    ) : !loading && logs.length > 0 && <div className="text-center text-slate-400 py-10">No hay errores pendientes.</div>}
                 </div>
             )}
 
@@ -526,12 +488,10 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                                     {group.map(card => (
                                         <div key={card.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors">
                                             <div className="flex items-center gap-3">
-                                                <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase tracking-wider w-24 text-center truncate ${card.category === 'Frases' ? 'bg-purple-100 text-purple-700' : 'bg-slate-100 text-slate-600'}`}>
-                                                    {card.category || 'GENERAL'}
-                                                </span>
+                                                <span className="text-xs text-slate-400 font-mono w-10">#{card.id}</span>
                                                 <div className="flex flex-col">
                                                     <span className="font-bold text-slate-800">{card.spanish}</span>
-                                                    <span className="text-xs text-slate-400 font-mono">{card.phonetic}</span>
+                                                    <span className="text-[10px] text-slate-500">{card.category}</span>
                                                 </div>
                                             </div>
                                             <button 
@@ -579,8 +539,6 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
   };
 
   const displayText = showDiacritics ? data.arabic : removeDiacritics(data.arabic);
-  
-  // Procesamos las categorías con PUNTO Y COMA
   const tags = data.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
 
   return (
@@ -588,7 +546,6 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
       onClick={handleNextFace}
       className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group ${getCardStyle()}`}
     >
-      {/* Botones Admin */}
       {isAdmin && (
         <div className="absolute top-2 right-2 flex gap-2 z-10">
           <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
@@ -596,7 +553,6 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
         </div>
       )}
 
-      {/* Contenido Principal */}
       <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
         {isAdmin ? (
           <>
@@ -627,12 +583,9 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
         )}
       </div>
 
-      {/* Categorías (Abajo - Estilo Píldoras para mostrar todas) */}
       <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">
         {tags.map((tag, i) => (
-          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">
-            {tag}
-          </span>
+          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>
         ))}
       </div>
     </div>
@@ -652,10 +605,7 @@ function CardFormModal({ card, categories, onSave, onClose }) {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
         <div className="bg-slate-800 px-6 py-4 flex justify-between items-center text-white">
-          <h2 className="text-lg font-bold flex items-center gap-2">
-            {card ? <Edit2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
-            {card ? "Editar Tarjeta" : "Nueva Tarjeta"}
-          </h2>
+          <h2 className="text-lg font-bold flex items-center gap-2">{card ? <Edit2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}{card ? "Editar Tarjeta" : "Nueva Tarjeta"}</h2>
           <button onClick={onClose} className="hover:bg-slate-700 p-1 rounded transition"><X className="w-5 h-5" /></button>
         </div>
         <form onSubmit={(e) => { e.preventDefault(); onSave(formData); }} className="p-6 space-y-4">
@@ -663,24 +613,15 @@ function CardFormModal({ card, categories, onSave, onClose }) {
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría(s)</label>
             <div className="bg-blue-50 text-blue-800 text-xs p-2 rounded mb-2 border border-blue-100 flex items-center gap-2">
                 <AlertTriangle className="w-4 h-4" />
-                <span>Tip: Usa <strong>punto y coma (;)</strong> para asignar múltiples categorías. <br/>Ejemplo: <em>Verbos; Pista 1; Importante</em></span>
+                <span>Tip: Usa <strong>punto y coma (;)</strong> para asignar múltiples categorías.</span>
             </div>
             <input list="categories-list" type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} placeholder="Ej: Pista 1; Saludos" />
             <datalist id="categories-list">{categories.map(cat => <option key={cat} value={cat} />)}</datalist>
           </div>
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Español</label>
-            <input type="text" required className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-medium" value={formData.spanish} onChange={e => setFormData({...formData, spanish: e.target.value})} />
-          </div>
+          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Español</label><input type="text" required className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-medium" value={formData.spanish} onChange={e => setFormData({...formData, spanish: e.target.value})} /></div>
           <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Árabe</label>
-              <input type="text" required dir="rtl" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-arabic text-lg" value={formData.arabic} onChange={e => setFormData({...formData, arabic: e.target.value})} />
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label>
-              <input type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm" value={formData.phonetic} onChange={e => setFormData({...formData, phonetic: e.target.value})} />
-            </div>
+            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Árabe</label><input type="text" required dir="rtl" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-arabic text-lg" value={formData.arabic} onChange={e => setFormData({...formData, arabic: e.target.value})} /></div>
+            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label><input type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm" value={formData.phonetic} onChange={e => setFormData({...formData, phonetic: e.target.value})} /></div>
           </div>
           <div className="pt-4 flex justify-end gap-3 border-t mt-4">
             <button type="button" onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium">Cancelar</button>
@@ -732,124 +673,46 @@ function SmartImportModal({ onClose, onImport }) {
 
     try {
       const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
-      
-      let prompt = `
-        Actúa como traductor experto de árabe a español. Analizas texto en bruto.
-        TU MISIÓN: Rescatar vocabulario y frases.
-
-        REGLAS:
-        1. PRECISIÓN EN TRADUCCIÓN: Corrige si el original tiene errores.
-        2. NUNACIÓN: Elimina el tanwin final salvo excepciones comunes.
-        3. Busca palabras O FRASES en árabe.
-        4. CATEGORÍA IMPORTANTE: 
-           - Si la entrada es una frase completa o una oración larga, sugiérela como categoría "Frases".
-           - Si es una palabra suelta, usa su categoría lógica (Animales, Comida...).
-           - Si pertenece a varias categorías, ÚNELAS CON PUNTO Y COMA (;). Ejemplo: "Comida; Verbos"
-        5. Ignora ruido y números.
-
-        Devuelve JSON válido:
-        [{ "category": "Categoría", "spanish": "Traducción", "arabic": "Árabe", "phonetic": "Fonética" }]
-      `;
-
+      let prompt = `Actúa como traductor experto. Analiza texto en bruto. TU MISIÓN: Rescatar vocabulario. REGLAS: 1. PRECISIÓN. 2. NUNACIÓN: Elimina tanwin final salvo excepciones. 3. Busca palabras/frases. 4. CATEGORÍA: Sugiere "Frases" o tema lógico. 5. Separa categorías con PUNTO Y COMA (;). Devuelve JSON válido: [{ "category": "...", "spanish": "...", "arabic": "...", "phonetic": "..." }]`;
       let userContent = "";
+      if (activeTab === 'text') userContent = [{ type: "text", text: `Lista: ${textInput}` }];
+      else if (activeTab === 'pdf') { const pdfText = await extractTextFromPDF(pdfFile); userContent = [{ type: "text", text: `PDF: ${pdfText}` }]; }
+      else { const base64Image = await new Promise((r) => { const reader = new FileReader(); reader.onloadend = () => r(reader.result); reader.readAsDataURL(imageFile); }); userContent = [{ type: "text", text: "Imagen:" }, { type: "image_url", image_url: { url: base64Image } }]; }
 
-      if (activeTab === 'text') {
-        userContent = [{ type: "text", text: `Lista: ${textInput}` }];
-      } else if (activeTab === 'pdf') {
-        const pdfText = await extractTextFromPDF(pdfFile);
-        userContent = [{ type: "text", text: `Extrae vocabulario del PDF:\n${pdfText}` }];
-      } else {
-        const base64Image = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(imageFile);
-        });
-        userContent = [
-          { type: "text", text: "Extrae vocabulario de esta imagen." },
-          { type: "image_url", image_url: { url: base64Image } }
-        ];
-      }
-
-      setStatus("Procesando...");
       const response = await openai.chat.completions.create({
         model: "gpt-4o", 
-        messages: [
-          { role: "system", content: prompt },
-          { role: "user", content: userContent }
-        ],
+        messages: [{ role: "system", content: prompt }, { role: "user", content: userContent }],
         max_tokens: 3000,
       });
-
       const rawContent = response.choices[0].message.content;
-      const jsonStr = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
-      const parsedData = JSON.parse(jsonStr);
-
-      setGeneratedCards(parsedData);
-      setStatus("¡Hecho! Revisa las tarjetas.");
-
-    } catch (error) {
-      console.error(error);
-      alert("Error: " + error.message);
-      setStatus("Error.");
-    } finally {
-      setLoading(false);
-    }
+      const start = rawContent.indexOf('['); const end = rawContent.lastIndexOf(']');
+      if (start !== -1 && end !== -1) {
+          setGeneratedCards(JSON.parse(rawContent.substring(start, end + 1)));
+          setStatus("¡Hecho!");
+      } else { throw new Error("No se encontró JSON válido"); }
+    } catch (error) { console.error(error); alert("Error: " + error.message); setStatus("Error."); } finally { setLoading(false); }
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="bg-purple-700 px-6 py-4 flex justify-between items-center text-white shrink-0">
-          <h2 className="text-lg font-bold flex items-center gap-2"><Wand2 className="w-5 h-5" /> Importador Mágico IA</h2>
-          <button onClick={onClose} className="hover:bg-purple-600 p-1 rounded transition"><X className="w-5 h-5" /></button>
-        </div>
-
+        <div className="bg-purple-700 px-6 py-4 flex justify-between items-center text-white shrink-0"><h2 className="text-lg font-bold flex items-center gap-2"><Wand2 className="w-5 h-5" /> Importador Mágico IA</h2><button onClick={onClose} className="hover:bg-purple-600 p-1 rounded transition"><X className="w-5 h-5" /></button></div>
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-100">
-            <label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label>
-            <input 
-              type="password" 
-              placeholder="sk-..." 
-              className="w-full p-2 border border-purple-200 rounded bg-white text-sm"
-              value={apiKey}
-              onChange={handleApiKeyChange}
-            />
-          </div>
-
+          <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-100"><label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label><input type="password" placeholder="sk-..." className="w-full p-2 border border-purple-200 rounded bg-white text-sm" value={apiKey} onChange={handleApiKeyChange} /></div>
           {generatedCards.length === 0 ? (
             <div className="space-y-6">
-              <div className="flex border-b border-slate-200">
-                <button onClick={() => setActiveTab('text')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'text' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <FileText className="w-4 h-4" /> Texto </button>
-                <button onClick={() => setActiveTab('image')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'image' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <ImageIcon className="w-4 h-4" /> Imagen </button>
-                <button onClick={() => setActiveTab('pdf')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'pdf' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <FileUp className="w-4 h-4" /> PDF </button>
-              </div>
-
+              <div className="flex border-b border-slate-200"><button onClick={() => setActiveTab('text')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'text' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <FileText className="w-4 h-4" /> Texto </button><button onClick={() => setActiveTab('image')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'image' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <ImageIcon className="w-4 h-4" /> Imagen </button><button onClick={() => setActiveTab('pdf')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'pdf' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <FileUp className="w-4 h-4" /> PDF </button></div>
               <div className="min-h-[200px] flex flex-col justify-center">
                 {activeTab === 'text' && <textarea className="w-full h-40 p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none resize-none" placeholder="Escribe lista..." value={textInput} onChange={(e) => setTextInput(e.target.value)} />}
                 {activeTab === 'image' && <div className="border-2 border-dashed border-slate-300 rounded-lg p-10 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 relative"><input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => setImageFile(e.target.files[0])} />{imageFile ? <p className="text-purple-600 font-bold">{imageFile.name}</p> : <><ImageIcon className="w-10 h-10 opacity-50"/><p>Sube imagen</p></>}</div>}
                 {activeTab === 'pdf' && <div className="border-2 border-dashed border-slate-300 rounded-lg p-10 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 relative"><input type="file" accept="application/pdf" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => setPdfFile(e.target.files[0])} />{pdfFile ? <p className="text-red-600 font-bold">{pdfFile.name}</p> : <><FileUp className="w-10 h-10 opacity-50"/><p>Sube PDF</p></>}</div>}
               </div>
-
-              <button onClick={handleGenerate} disabled={loading || !apiKey} className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50">
-                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5" />} {loading ? status : "Generar Tarjetas"}
-              </button>
+              <button onClick={handleGenerate} disabled={loading || !apiKey} className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5" />} {loading ? status : "Generar Tarjetas"}</button>
             </div>
           ) : (
             <div className="space-y-4">
               <div className="flex justify-between items-center"><h3 className="font-bold text-lg text-slate-700">Vista Previa ({generatedCards.length})</h3><button onClick={() => setGeneratedCards([])} className="text-xs text-red-500 hover:underline">Descartar</button></div>
-              <div className="grid gap-2 max-h-[400px] overflow-y-auto">
-                {generatedCards.map((card, i) => (
-                  <div key={i} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg shadow-sm">
-                    <div className="w-8 h-8 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div>
-                    <div className="flex-1 grid grid-cols-4 gap-2 text-sm">
-                      <div className="font-bold text-slate-500 text-xs uppercase">{card.category}</div>
-                      <div className="font-bold text-slate-800">{card.spanish}</div>
-                      <div className="font-arabic text-emerald-700 text-right" dir="rtl">{card.arabic}</div>
-                      <div className="font-mono text-slate-400 text-xs italic">{card.phonetic}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <div className="grid gap-2 max-h-[400px] overflow-y-auto">{generatedCards.map((card, i) => (<div key={i} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg shadow-sm"><div className="w-8 h-8 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div><div className="flex-1 grid grid-cols-4 gap-2 text-sm"><div className="font-bold text-slate-500 text-xs uppercase">{card.category}</div><div className="font-bold text-slate-800">{card.spanish}</div><div className="font-arabic text-emerald-700 text-right" dir="rtl">{card.arabic}</div><div className="font-mono text-slate-400 text-xs italic">{card.phonetic}</div></div></div>))}</div>
               <div className="p-4 border-t flex justify-end gap-3"><button onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button><button onClick={() => onImport(generatedCards)} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 flex items-center gap-2"><CheckCircle className="w-4 h-4" /> Importar</button></div>
             </div>
           )}
