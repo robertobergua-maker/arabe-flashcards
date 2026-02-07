@@ -926,7 +926,7 @@ function SmartImportModal({ onClose, onImport }) {
     if (!apiKey) { alert("Por favor introduce tu API Key de OpenAI"); return; }
     if (activeTab === 'text' && !textInput) return;
     if (activeTab === 'image' && !imageFile) return;
-    if (activeTab === 'pdf' && !pdfFile) return;
+    if (activeTab === 'pdf' && !pdfFile) return; 
 
     setLoading(true);
     setStatus("Conectando con la IA...");
