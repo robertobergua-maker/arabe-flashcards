@@ -6,7 +6,7 @@ import {
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, AlertTriangle, ArrowRight, Check
+  Settings, AlertTriangle, ArrowRight, Check, Gamepad2, Trophy, Frown, PartyPopper
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -54,6 +54,7 @@ export default function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
+  const [isGameOpen, setIsGameOpen] = useState(false); // NUEVO ESTADO PARA EL JUEGO
 
   // --- CARGAR DATOS ---
   useEffect(() => {
@@ -198,11 +199,9 @@ export default function App() {
 
   // --- LÓGICA DE FILTRADO MEJORADA ---
   const filteredCards = useMemo(() => {
-    // Normalizamos el término de búsqueda UNA sola vez
     const normalizedTerm = normalizeForSearch(searchTerm);
 
     let result = cards.filter(card => {
-      // Normalizamos los campos de la tarjeta
       const s = normalizeForSearch(card.spanish);
       const a = normalizeForSearch(card.arabic);
       
@@ -251,16 +250,29 @@ export default function App() {
                     {categories.map(cat => <option key={cat} value={cat} className="text-slate-800 bg-white">{cat}</option>)}
                 </select>
             </div>
-            <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
-                <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
-                <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
-                <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>
-                    <Type className="w-3.5 h-3.5" />
+            
+            {/* GRUPO DE BOTONES DE ACCIÓN */}
+            <div className="flex gap-2">
+                <button 
+                    onClick={() => setIsGameOpen(true)} 
+                    className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors flex items-center justify-center"
+                    title="Jugar Quiz"
+                >
+                    <Gamepad2 className="w-5 h-5" />
+                </button>
+
+                <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
+                    <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
+                    <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
+                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>
+                        <Type className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+
+                <button onClick={handleAdminToggle} className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-black/20 hover:bg-black/30 text-white/70'}`}>
+                {isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
                 </button>
             </div>
-            <button onClick={handleAdminToggle} className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-black/20 hover:bg-black/30 text-white/70'}`}>
-              {isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-            </button>
           </div>
         </div>
       </header>
@@ -288,6 +300,148 @@ export default function App() {
       {isFormOpen && <CardFormModal card={editingCard} categories={categories.filter(c => c !== "Todos")} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
       {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} onImport={handleBulkImport} />}
       {isMaintenanceOpen && <MaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} refreshCards={fetchAllCards} />}
+      {isGameOpen && <GameModal onClose={() => setIsGameOpen(false)} cards={cards} />}
+    </div>
+  );
+}
+
+// --- JUEGO QUIZ EXPRESS ---
+function GameModal({ onClose, cards }) {
+  const [currentRound, setCurrentRound] = useState(null);
+  const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(parseInt(localStorage.getItem('quiz_highscore') || '0'));
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [isCorrect, setIsCorrect] = useState(null); // null, true, false
+
+  useEffect(() => {
+    startNewRound();
+  }, []);
+
+  const startNewRound = () => {
+    if (cards.length < 4) return;
+    
+    // Seleccionar una carta correcta aleatoria
+    const correctCard = cards[Math.floor(Math.random() * cards.length)];
+    
+    // Seleccionar 3 distractores que NO sean la carta correcta
+    let distractors = [];
+    while (distractors.length < 3) {
+      const random = cards[Math.floor(Math.random() * cards.length)];
+      if (random.id !== correctCard.id && !distractors.find(d => d.id === random.id)) {
+        distractors.push(random);
+      }
+    }
+
+    // Mezclar opciones
+    const options = shuffleArray([correctCard, ...distractors]);
+
+    setCurrentRound({
+      question: correctCard,
+      options: options
+    });
+    setSelectedOption(null);
+    setIsCorrect(null);
+  };
+
+  const handleOptionClick = (option) => {
+    if (selectedOption) return; // Evitar doble click
+
+    setSelectedOption(option);
+    const correct = option.id === currentRound.question.id;
+    setIsCorrect(correct);
+
+    if (correct) {
+      const newScore = score + 1;
+      setScore(newScore);
+      if (newScore > highScore) {
+        setHighScore(newScore);
+        localStorage.setItem('quiz_highscore', newScore.toString());
+      }
+      // Siguiente ronda automática en 1s
+      setTimeout(startNewRound, 1000);
+    } else {
+      // Reiniciar score si falla (modo racha)
+      setScore(0);
+      // Esperar 2s para que vea la respuesta correcta
+      setTimeout(startNewRound, 2500);
+    }
+  };
+
+  if (!currentRound) return <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center text-white">Cargando juego...</div>;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative">
+        {/* Header Juego */}
+        <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <Gamepad2 className="w-6 h-6" />
+            <h2 className="font-bold text-lg">Quiz Express</h2>
+          </div>
+          <button onClick={onClose} className="hover:bg-indigo-500 p-1 rounded"><X className="w-6 h-6" /></button>
+        </div>
+
+        {/* Marcadores */}
+        <div className="flex justify-between px-6 py-3 bg-indigo-50 border-b border-indigo-100">
+          <div className="flex flex-col items-center">
+            <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Racha</span>
+            <span className="text-xl font-black text-indigo-700">{score}</span>
+          </div>
+          <div className="flex flex-col items-center">
+            <span className="text-xs font-bold text-amber-500 uppercase tracking-wider flex items-center gap-1"><Trophy className="w-3 h-3"/> Récord</span>
+            <span className="text-xl font-black text-amber-600">{highScore}</span>
+          </div>
+        </div>
+
+        {/* Área de Pregunta */}
+        <div className="p-8 text-center bg-slate-50">
+          <span className="text-xs font-bold text-slate-400 uppercase mb-2 block">¿Cómo se dice en Árabe?</span>
+          <h3 className="text-3xl font-black text-slate-800 animate-fade-in-up">{currentRound.question.spanish}</h3>
+        </div>
+
+        {/* Opciones */}
+        <div className="p-6 grid grid-cols-1 gap-3 bg-white">
+          {currentRound.options.map((option) => {
+            let btnClass = "p-4 rounded-xl border-2 text-xl font-arabic text-center transition-all duration-200 shadow-sm ";
+            
+            if (selectedOption) {
+              if (option.id === currentRound.question.id) {
+                btnClass += "bg-green-100 border-green-500 text-green-800 scale-105"; // Correcta siempre se pone verde al final
+              } else if (option.id === selectedOption.id && !isCorrect) {
+                btnClass += "bg-red-100 border-red-500 text-red-800 opacity-60"; // Incorrecta elegida
+              } else {
+                btnClass += "bg-slate-50 border-slate-100 text-slate-400 opacity-40"; // Las demás
+              }
+            } else {
+              btnClass += "bg-white border-slate-200 text-slate-700 hover:border-indigo-400 hover:bg-indigo-50 hover:shadow-md cursor-pointer active:scale-95";
+            }
+
+            return (
+              <button 
+                key={option.id}
+                disabled={!!selectedOption}
+                onClick={() => handleOptionClick(option)}
+                className={btnClass}
+                dir="rtl"
+              >
+                {option.arabic}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Feedback Mensaje */}
+        <div className="h-12 flex items-center justify-center bg-slate-100 border-t border-slate-200">
+          {selectedOption && (
+            isCorrect ? (
+              <span className="text-green-600 font-bold flex items-center gap-2 animate-bounce"><PartyPopper className="w-5 h-5"/> ¡Correcto!</span>
+            ) : (
+              <span className="text-red-500 font-bold flex items-center gap-2 animate-shake"><Frown className="w-5 h-5"/> ¡Ooops! Era la marcada en verde</span>
+            )
+          )}
+          {!selectedOption && <span className="text-slate-400 text-xs">Elige la opción correcta</span>}
+        </div>
+      </div>
     </div>
   );
 }
