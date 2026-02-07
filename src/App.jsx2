@@ -14,20 +14,9 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.vers
 
 // --- UTILIDADES ---
 
-// Elimina solo diacríticos árabes (para visualización)
-const removeArabicDiacritics = (text) => {
+const removeDiacritics = (text) => {
   if (!text) return "";
   return text.replace(/[\u064B-\u065F\u0670]/g, '');
-};
-
-// Normalización potente para BÚSQUEDAS (Español + Árabe)
-const normalizeForSearch = (text) => {
-  if (!text) return "";
-  return text
-    .toLowerCase()
-    .normalize("NFD") // Descompone caracteres (ej: á -> a + ´)
-    .replace(/[\u0300-\u036f]/g, "") // Elimina acentos latinos (Español)
-    .replace(/[\u064B-\u065F\u0670]/g, ""); // Elimina tashkeel (Árabe)
 };
 
 const shuffleArray = (array) => {
@@ -55,7 +44,7 @@ export default function App() {
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
 
-  // --- CARGAR DATOS ---
+  // --- CARGAR DATOS (PAGINACIÓN BLINDADA) ---
   useEffect(() => {
     fetchAllCards();
   }, []);
@@ -90,6 +79,7 @@ export default function App() {
         safetyCounter++;
       }
 
+      // Eliminar duplicados por ID (por seguridad)
       const uniqueCards = Array.from(new Map(allData.map(item => [item.id, item])).values());
       setCards(uniqueCards);
     } catch (error) {
@@ -196,18 +186,12 @@ export default function App() {
     return ["Todos", ...pistaCats, ...otherCats];
   }, [cards]);
 
-  // --- LÓGICA DE FILTRADO MEJORADA ---
   const filteredCards = useMemo(() => {
-    // Normalizamos el término de búsqueda UNA sola vez
-    const normalizedTerm = normalizeForSearch(searchTerm);
-
     let result = cards.filter(card => {
-      // Normalizamos los campos de la tarjeta
-      const s = normalizeForSearch(card.spanish);
-      const a = normalizeForSearch(card.arabic);
-      
-      const matchesSearch = s.includes(normalizedTerm) || a.includes(normalizedTerm);
-      
+      const s = (card.spanish || "").toLowerCase();
+      const a = removeDiacritics(card.arabic || "");
+      const term = searchTerm.toLowerCase();
+      const matchesSearch = s.includes(term) || a.includes(term);
       let matchesCategory = false;
       if (selectedCategory === "Todos") {
         matchesCategory = true;
@@ -218,7 +202,6 @@ export default function App() {
       }
       return matchesSearch && matchesCategory;
     });
-
     if (selectedCategory === "Todos" && searchTerm === "") {
       return shuffleArray(result);
     }
@@ -239,7 +222,7 @@ export default function App() {
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-white/50" />
               <input 
                 type="text"
-                placeholder="Buscar (ej: arbol, kitab)..."
+                placeholder="Buscar palabra..."
                 className="w-full pl-9 pr-4 py-2 bg-black/20 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 placeholder-white/50 text-sm text-white"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -325,6 +308,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
         const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
         const batchSize = 20;
         let allIssues = [];
+        // Analizamos TODAS las tarjetas (puedes reducirlo con slice si quieres probar primero)
         const cardsToAudit = cards; 
         
         for (let i = 0; i < cardsToAudit.length; i += batchSize) {
@@ -359,6 +343,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                 temperature: 0.2
             });
 
+            // PARSEO ROBUSTO: Busca el primer '[' y el último ']'
             let rawContent = response.choices[0].message.content;
             const start = rawContent.indexOf('[');
             const end = rawContent.lastIndexOf(']');
@@ -388,16 +373,19 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     try {
       const updateData = {};
       if (issue.field === 'arabic' || !issue.field) updateData.arabic = issue.suggestion;
-      if (issue.field === 'spanish') updateData.spanish = issue.suggestion;
+      if (issue.field === 'spanish') updateData.spanish = issue.suggestion; // Por si la corrección es en español
 
+      // Si la IA no especifica campo, asumimos que es una corrección general (usualmente árabe en este caso)
+      // Pero mejor verificamos si la sugerencia parece árabe o español
       if (!issue.field) {
+         // Simple check: contiene caracteres árabes?
          if (/[\u0600-\u06FF]/.test(issue.suggestion)) updateData.arabic = issue.suggestion;
          else updateData.spanish = issue.suggestion;
       }
 
       await supabase.from('flashcards').update(updateData).eq('id', issue.id);
       setAuditResults(prev => prev.filter(p => p.id !== issue.id));
-      await refreshCards(); 
+      await refreshCards(); // Refresca la UI
     } catch (err) {
       alert("Error aplicando corrección: " + err.message);
     }
@@ -550,8 +538,7 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
     }
   };
 
-  // Usamos removeArabicDiacritics para el toggle visual, no el normalizador de búsqueda
-  const displayText = showDiacritics ? data.arabic : removeArabicDiacritics(data.arabic);
+  const displayText = showDiacritics ? data.arabic : removeDiacritics(data.arabic);
   const tags = data.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
 
   return (
