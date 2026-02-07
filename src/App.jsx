@@ -90,7 +90,6 @@ export default function App() {
         safetyCounter++;
       }
 
-      // Eliminar duplicados basándonos en ID para evitar errores de renderizado
       const uniqueCards = Array.from(new Map(allData.map(item => [item.id, item])).values());
       setCards(uniqueCards);
     } catch (error) {
@@ -299,7 +298,7 @@ export default function App() {
 
 // --- HUB DE JUEGOS Y LÓGICA DE JUEGOS ---
 function GamesHub({ onClose, cards }) {
-  const [activeGame, setActiveGame] = useState('menu'); // menu, quiz, memory
+  const [activeGame, setActiveGame] = useState('menu'); 
 
   if (activeGame === 'quiz') return <QuizGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} />;
   if (activeGame === 'memory') return <MemoryGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} />;
@@ -418,6 +417,7 @@ function QuizGame({ onBack, onClose, cards }) {
   );
 }
 
+// JUEGO 2: MEMORIA CON RENDERIZADO SEGURO
 function MemoryGame({ onBack, onClose, cards }) {
   const [gameCards, setGameCards] = useState([]);
   const [flipped, setFlipped] = useState([]); 
@@ -493,12 +493,44 @@ function MemoryGame({ onBack, onClose, cards }) {
                 <div className="grid grid-cols-3 md:grid-cols-4 gap-3 h-full content-center">
                     {gameCards.map((card, index) => {
                         const isFlipped = flipped.includes(index) || matched.includes(card.pairId);
+                        
+                        // ESTILOS INLINE PARA GARANTIZAR QUE LA ROTACIÓN 3D FUNCIONE SÍ O SÍ
                         return (
-                            <div key={index} onClick={() => handleCardClick(index)} className={`aspect-[3/4] rounded-xl cursor-pointer perspective-1000 relative transition-all duration-300 ${isFlipped ? '' : 'hover:scale-105'}`}>
-                                <div className={`w-full h-full transition-all duration-500 transform-style-3d relative ${isFlipped ? 'rotate-y-180' : ''}`}>
-                                    <div className={`absolute inset-0 backface-hidden bg-emerald-600 rounded-xl border-2 border-emerald-700 flex items-center justify-center ${isFlipped ? 'opacity-0' : 'opacity-100'}`}><Grid3x3 className="text-white/30 w-8 h-8" /></div>
-                                    <div className={`absolute inset-0 backface-hidden bg-white rounded-xl border-2 border-emerald-500 flex items-center justify-center p-2 text-center shadow-md ${isFlipped ? 'opacity-100 rotate-y-180' : 'opacity-0'}`}>
-                                        <span className={`font-bold ${card.type === 'ar' ? 'font-arabic text-xl' : 'text-sm'}`} dir={card.type === 'ar' ? 'rtl' : 'ltr'}>{card.content}</span>
+                            <div 
+                                key={index} 
+                                onClick={() => handleCardClick(index)}
+                                className="aspect-[3/4] cursor-pointer perspective-1000 group"
+                            >
+                                <div 
+                                    className="relative w-full h-full duration-500 transition-all preserve-3d"
+                                    style={{ 
+                                        transformStyle: 'preserve-3d', 
+                                        transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' 
+                                    }}
+                                >
+                                    
+                                    {/* CARA TRASERA (Grid/Logo) - Visible cuando NO flippeada */}
+                                    <div 
+                                        className="absolute inset-0 backface-hidden bg-emerald-600 rounded-xl border-2 border-emerald-700 flex items-center justify-center shadow-md"
+                                        style={{ backfaceVisibility: 'hidden' }}
+                                    >
+                                        <Grid3x3 className="text-white/30 w-10 h-10" />
+                                    </div>
+
+                                    {/* CARA DELANTERA (Texto) - Visible cuando flippeada (ya rotada 180 para que al girar quede bien) */}
+                                    <div 
+                                        className="absolute inset-0 backface-hidden bg-white rounded-xl border-2 border-emerald-500 flex items-center justify-center p-2 text-center shadow-md"
+                                        style={{ 
+                                            backfaceVisibility: 'hidden', 
+                                            transform: 'rotateY(180deg)' 
+                                        }}
+                                    >
+                                        <span 
+                                            className={`font-bold text-slate-800 ${card.type === 'ar' ? 'font-arabic text-xl' : 'text-sm'}`} 
+                                            dir={card.type === 'ar' ? 'rtl' : 'ltr'}
+                                        >
+                                            {card.content}
+                                        </span>
                                     </div>
                                 </div>
                             </div>
@@ -512,11 +544,10 @@ function MemoryGame({ onBack, onClose, cards }) {
   );
 }
 
-// --- COMPONENTE FLASHCARD BLINDADO ---
+// --- COMPONENTE FLASHCARD INDESTRUCTIBLE ---
 function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
   const [flipState, setFlipState] = useState(0);
   
-  // Reiniciar estado al cambiar idioma
   useEffect(() => { setFlipState(0); }, [frontLanguage]);
 
   const handleNextFace = () => { 
