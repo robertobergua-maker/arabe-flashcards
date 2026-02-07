@@ -6,7 +6,8 @@ import {
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, AlertTriangle, ArrowRight, Check, Gamepad2, Trophy, Frown, PartyPopper
+  Settings, AlertTriangle, ArrowRight, Check, Gamepad2, Trophy, Frown, PartyPopper,
+  Grid3x3, BrainCircuit, ArrowLeft
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -14,20 +15,18 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.vers
 
 // --- UTILIDADES ---
 
-// Elimina solo diacríticos árabes (para visualización)
 const removeArabicDiacritics = (text) => {
   if (!text) return "";
   return text.replace(/[\u064B-\u065F\u0670]/g, '');
 };
 
-// Normalización potente para BÚSQUEDAS (Español + Árabe)
 const normalizeForSearch = (text) => {
   if (!text) return "";
   return text
     .toLowerCase()
-    .normalize("NFD") // Descompone caracteres (ej: á -> a + ´)
-    .replace(/[\u0300-\u036f]/g, "") // Elimina acentos latinos (Español)
-    .replace(/[\u064B-\u065F\u0670]/g, ""); // Elimina tashkeel (Árabe)
+    .normalize("NFD") 
+    .replace(/[\u0300-\u036f]/g, "") 
+    .replace(/[\u064B-\u065F\u0670]/g, ""); 
 };
 
 const shuffleArray = (array) => {
@@ -54,7 +53,9 @@ export default function App() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
-  const [isGameOpen, setIsGameOpen] = useState(false); // NUEVO ESTADO PARA EL JUEGO
+  
+  // ESTADO DEL HUB DE JUEGOS
+  const [isGamesHubOpen, setIsGamesHubOpen] = useState(false); 
 
   // --- CARGAR DATOS ---
   useEffect(() => {
@@ -114,7 +115,6 @@ export default function App() {
     }
   };
 
-  // --- FUNCIONES CRUD ---
   const handleSaveCard = async (cardData) => {
     try {
       if (cardData.id) {
@@ -171,7 +171,6 @@ export default function App() {
     }
   };
 
-  // --- UI Y ORDENACIÓN ---
   const openNewCardModal = () => { setEditingCard(null); setIsFormOpen(true); };
   const openEditCardModal = (card) => { setEditingCard(card); setIsFormOpen(true); };
 
@@ -197,16 +196,12 @@ export default function App() {
     return ["Todos", ...pistaCats, ...otherCats];
   }, [cards]);
 
-  // --- LÓGICA DE FILTRADO MEJORADA ---
   const filteredCards = useMemo(() => {
     const normalizedTerm = normalizeForSearch(searchTerm);
-
     let result = cards.filter(card => {
       const s = normalizeForSearch(card.spanish);
       const a = normalizeForSearch(card.arabic);
-      
       const matchesSearch = s.includes(normalizedTerm) || a.includes(normalizedTerm);
-      
       let matchesCategory = false;
       if (selectedCategory === "Todos") {
         matchesCategory = true;
@@ -217,7 +212,6 @@ export default function App() {
       }
       return matchesSearch && matchesCategory;
     });
-
     if (selectedCategory === "Todos" && searchTerm === "") {
       return shuffleArray(result);
     }
@@ -251,12 +245,11 @@ export default function App() {
                 </select>
             </div>
             
-            {/* GRUPO DE BOTONES DE ACCIÓN */}
             <div className="flex gap-2">
                 <button 
-                    onClick={() => setIsGameOpen(true)} 
-                    className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors flex items-center justify-center"
-                    title="Jugar Quiz"
+                    onClick={() => setIsGamesHubOpen(true)} 
+                    className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors flex items-center justify-center shadow-lg"
+                    title="Juegos de Práctica"
                 >
                     <Gamepad2 className="w-5 h-5" />
                 </button>
@@ -300,146 +293,246 @@ export default function App() {
       {isFormOpen && <CardFormModal card={editingCard} categories={categories.filter(c => c !== "Todos")} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
       {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} onImport={handleBulkImport} />}
       {isMaintenanceOpen && <MaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} refreshCards={fetchAllCards} />}
-      {isGameOpen && <GameModal onClose={() => setIsGameOpen(false)} cards={cards} />}
+      {isGamesHubOpen && <GamesHub onClose={() => setIsGamesHubOpen(false)} cards={cards} />}
     </div>
   );
 }
 
-// --- JUEGO QUIZ EXPRESS ---
-function GameModal({ onClose, cards }) {
+// --- HUB DE JUEGOS Y LÓGICA DE JUEGOS ---
+function GamesHub({ onClose, cards }) {
+  const [activeGame, setActiveGame] = useState('menu'); // menu, quiz, memory
+
+  if (activeGame === 'quiz') return <QuizGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} />;
+  if (activeGame === 'memory') return <MemoryGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} />;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative">
+        <div className="bg-slate-800 p-6 text-white flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <Gamepad2 className="w-8 h-8 text-yellow-400" />
+            <h2 className="font-bold text-2xl">Arcade de Aprendizaje</h2>
+          </div>
+          <button onClick={onClose} className="hover:bg-slate-700 p-2 rounded-full transition"><X className="w-6 h-6" /></button>
+        </div>
+
+        <div className="p-8 bg-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Tarjeta Quiz */}
+          <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200">
+            <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+              <BrainCircuit className="w-7 h-7" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3>
+            <p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción correcta de entre 4 opciones antes de que pierdas la racha.</p>
+          </button>
+
+          {/* Tarjeta Memory */}
+          <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200">
+            <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+              <Grid3x3 className="w-7 h-7" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Memoria de Parejas</h3>
+            <p className="text-sm text-slate-500">Ejercita tu mente. Encuentra las parejas de cartas (Español - Árabe) ocultas en el tablero.</p>
+          </button>
+        </div>
+        
+        <div className="bg-slate-50 p-4 text-center text-xs text-slate-400 border-t">
+            ¡Practicar jugando es la mejor forma de aprender!
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// JUEGO 1: QUIZ
+function QuizGame({ onBack, onClose, cards }) {
   const [currentRound, setCurrentRound] = useState(null);
   const [score, setScore] = useState(0);
   const [highScore, setHighScore] = useState(parseInt(localStorage.getItem('quiz_highscore') || '0'));
   const [selectedOption, setSelectedOption] = useState(null);
-  const [isCorrect, setIsCorrect] = useState(null); // null, true, false
+  const [isCorrect, setIsCorrect] = useState(null);
 
-  useEffect(() => {
-    startNewRound();
-  }, []);
+  useEffect(() => { startNewRound(); }, []);
 
   const startNewRound = () => {
     if (cards.length < 4) return;
-    
-    // Seleccionar una carta correcta aleatoria
     const correctCard = cards[Math.floor(Math.random() * cards.length)];
-    
-    // Seleccionar 3 distractores que NO sean la carta correcta
     let distractors = [];
     while (distractors.length < 3) {
       const random = cards[Math.floor(Math.random() * cards.length)];
-      if (random.id !== correctCard.id && !distractors.find(d => d.id === random.id)) {
-        distractors.push(random);
-      }
+      if (random.id !== correctCard.id && !distractors.find(d => d.id === random.id)) distractors.push(random);
     }
-
-    // Mezclar opciones
-    const options = shuffleArray([correctCard, ...distractors]);
-
-    setCurrentRound({
-      question: correctCard,
-      options: options
-    });
+    setCurrentRound({ question: correctCard, options: shuffleArray([correctCard, ...distractors]) });
     setSelectedOption(null);
     setIsCorrect(null);
   };
 
   const handleOptionClick = (option) => {
-    if (selectedOption) return; // Evitar doble click
-
+    if (selectedOption) return;
     setSelectedOption(option);
     const correct = option.id === currentRound.question.id;
     setIsCorrect(correct);
-
     if (correct) {
       const newScore = score + 1;
       setScore(newScore);
-      if (newScore > highScore) {
-        setHighScore(newScore);
-        localStorage.setItem('quiz_highscore', newScore.toString());
-      }
-      // Siguiente ronda automática en 1s
+      if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('quiz_highscore', newScore.toString()); }
       setTimeout(startNewRound, 1000);
     } else {
-      // Reiniciar score si falla (modo racha)
       setScore(0);
-      // Esperar 2s para que vea la respuesta correcta
       setTimeout(startNewRound, 2500);
     }
   };
 
-  if (!currentRound) return <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center text-white">Cargando juego...</div>;
+  if (!currentRound) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
 
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative">
-        {/* Header Juego */}
         <div className="bg-indigo-600 p-4 text-white flex justify-between items-center">
           <div className="flex items-center gap-2">
-            <Gamepad2 className="w-6 h-6" />
+            <button onClick={onBack} className="hover:bg-indigo-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button>
             <h2 className="font-bold text-lg">Quiz Express</h2>
           </div>
           <button onClick={onClose} className="hover:bg-indigo-500 p-1 rounded"><X className="w-6 h-6" /></button>
         </div>
-
-        {/* Marcadores */}
         <div className="flex justify-between px-6 py-3 bg-indigo-50 border-b border-indigo-100">
-          <div className="flex flex-col items-center">
-            <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">Racha</span>
-            <span className="text-xl font-black text-indigo-700">{score}</span>
-          </div>
-          <div className="flex flex-col items-center">
-            <span className="text-xs font-bold text-amber-500 uppercase tracking-wider flex items-center gap-1"><Trophy className="w-3 h-3"/> Récord</span>
-            <span className="text-xl font-black text-amber-600">{highScore}</span>
-          </div>
+          <div className="flex flex-col items-center"><span className="text-xs font-bold text-indigo-400 uppercase">Racha</span><span className="text-xl font-black text-indigo-700">{score}</span></div>
+          <div className="flex flex-col items-center"><span className="text-xs font-bold text-amber-500 uppercase flex items-center gap-1"><Trophy className="w-3 h-3"/> Récord</span><span className="text-xl font-black text-amber-600">{highScore}</span></div>
         </div>
-
-        {/* Área de Pregunta */}
         <div className="p-8 text-center bg-slate-50">
           <span className="text-xs font-bold text-slate-400 uppercase mb-2 block">¿Cómo se dice en Árabe?</span>
-          <h3 className="text-3xl font-black text-slate-800 animate-fade-in-up">{currentRound.question.spanish}</h3>
+          <h3 className="text-2xl md:text-3xl font-black text-slate-800 animate-fade-in-up">{currentRound.question.spanish}</h3>
         </div>
-
-        {/* Opciones */}
         <div className="p-6 grid grid-cols-1 gap-3 bg-white">
           {currentRound.options.map((option) => {
             let btnClass = "p-4 rounded-xl border-2 text-xl font-arabic text-center transition-all duration-200 shadow-sm ";
-            
             if (selectedOption) {
-              if (option.id === currentRound.question.id) {
-                btnClass += "bg-green-100 border-green-500 text-green-800 scale-105"; // Correcta siempre se pone verde al final
-              } else if (option.id === selectedOption.id && !isCorrect) {
-                btnClass += "bg-red-100 border-red-500 text-red-800 opacity-60"; // Incorrecta elegida
-              } else {
-                btnClass += "bg-slate-50 border-slate-100 text-slate-400 opacity-40"; // Las demás
-              }
-            } else {
-              btnClass += "bg-white border-slate-200 text-slate-700 hover:border-indigo-400 hover:bg-indigo-50 hover:shadow-md cursor-pointer active:scale-95";
-            }
-
-            return (
-              <button 
-                key={option.id}
-                disabled={!!selectedOption}
-                onClick={() => handleOptionClick(option)}
-                className={btnClass}
-                dir="rtl"
-              >
-                {option.arabic}
-              </button>
-            );
+              if (option.id === currentRound.question.id) btnClass += "bg-green-100 border-green-500 text-green-800 scale-105";
+              else if (option.id === selectedOption.id && !isCorrect) btnClass += "bg-red-100 border-red-500 text-red-800 opacity-60";
+              else btnClass += "bg-slate-50 border-slate-100 text-slate-400 opacity-40";
+            } else btnClass += "bg-white border-slate-200 text-slate-700 hover:border-indigo-400 hover:bg-indigo-50 hover:shadow-md cursor-pointer active:scale-95";
+            return <button key={option.id} disabled={!!selectedOption} onClick={() => handleOptionClick(option)} className={btnClass} dir="rtl">{option.arabic}</button>;
           })}
         </div>
-
-        {/* Feedback Mensaje */}
         <div className="h-12 flex items-center justify-center bg-slate-100 border-t border-slate-200">
-          {selectedOption && (
-            isCorrect ? (
-              <span className="text-green-600 font-bold flex items-center gap-2 animate-bounce"><PartyPopper className="w-5 h-5"/> ¡Correcto!</span>
+          {selectedOption && (isCorrect ? <span className="text-green-600 font-bold flex items-center gap-2 animate-bounce"><PartyPopper className="w-5 h-5"/> ¡Correcto!</span> : <span className="text-red-500 font-bold flex items-center gap-2 animate-shake"><Frown className="w-5 h-5"/> ¡Ooops! Era la marcada en verde</span>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// JUEGO 2: MEMORIA (PAREJAS)
+function MemoryGame({ onBack, onClose, cards }) {
+  const [gameCards, setGameCards] = useState([]);
+  const [flipped, setFlipped] = useState([]); // Índices de cartas volteadas
+  const [matched, setMatched] = useState([]); // IDs de cartas emparejadas
+  const [disabled, setDisabled] = useState(false);
+  const [moves, setMoves] = useState(0);
+
+  useEffect(() => {
+    startNewGame();
+  }, []);
+
+  const startNewGame = () => {
+    if (cards.length < 6) return;
+    // Seleccionar 6 pares
+    const selectedPairs = shuffleArray([...cards]).slice(0, 6);
+    
+    // Crear el mazo de juego (12 cartas: 6 ES, 6 AR)
+    const deck = [];
+    selectedPairs.forEach(pair => {
+      deck.push({ id: pair.id, content: pair.spanish, type: 'es', pairId: pair.id });
+      deck.push({ id: pair.id, content: pair.arabic, type: 'ar', pairId: pair.id });
+    });
+
+    setGameCards(shuffleArray(deck));
+    setFlipped([]);
+    setMatched([]);
+    setMoves(0);
+    setDisabled(false);
+  };
+
+  const handleCardClick = (index) => {
+    if (disabled || flipped.includes(index) || matched.includes(gameCards[index].pairId)) return;
+
+    const newFlipped = [...flipped, index];
+    setFlipped(newFlipped);
+
+    if (newFlipped.length === 2) {
+      setDisabled(true);
+      setMoves(prev => prev + 1);
+      
+      const [firstIdx, secondIdx] = newFlipped;
+      if (gameCards[firstIdx].pairId === gameCards[secondIdx].pairId) {
+        // MATCH
+        setMatched(prev => [...prev, gameCards[firstIdx].pairId]);
+        setFlipped([]);
+        setDisabled(false);
+      } else {
+        // NO MATCH
+        setTimeout(() => {
+          setFlipped([]);
+          setDisabled(false);
+        }, 1000);
+      }
+    }
+  };
+
+  const isWin = matched.length === 6;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col h-[90vh] md:h-auto relative">
+        <div className="bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="hover:bg-emerald-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button>
+            <h2 className="font-bold text-lg">Memoria</h2>
+          </div>
+          <button onClick={onClose} className="hover:bg-emerald-500 p-1 rounded"><X className="w-6 h-6" /></button>
+        </div>
+
+        <div className="bg-emerald-50 p-2 flex justify-between items-center text-sm font-bold text-emerald-800 shrink-0">
+            <span>Movimientos: {moves}</span>
+            <span>Parejas: {matched.length} / 6</span>
+        </div>
+
+        <div className="p-4 bg-slate-100 flex-1 overflow-y-auto">
+            {isWin ? (
+                <div className="h-full flex flex-col items-center justify-center text-center">
+                    <Trophy className="w-20 h-20 text-yellow-500 mb-4 animate-bounce" />
+                    <h3 className="text-3xl font-black text-slate-800 mb-2">¡Completado!</h3>
+                    <p className="text-slate-500 mb-6">Lo lograste en {moves} movimientos.</p>
+                    <button onClick={startNewGame} className="bg-emerald-600 text-white px-6 py-3 rounded-full font-bold shadow-lg hover:bg-emerald-700 transition">Jugar de nuevo</button>
+                </div>
             ) : (
-              <span className="text-red-500 font-bold flex items-center gap-2 animate-shake"><Frown className="w-5 h-5"/> ¡Ooops! Era la marcada en verde</span>
-            )
-          )}
-          {!selectedOption && <span className="text-slate-400 text-xs">Elige la opción correcta</span>}
+                <div className="grid grid-cols-3 md:grid-cols-4 gap-3 h-full content-center">
+                    {gameCards.map((card, index) => {
+                        const isFlipped = flipped.includes(index) || matched.includes(card.pairId);
+                        return (
+                            <div 
+                                key={index} 
+                                onClick={() => handleCardClick(index)}
+                                className={`aspect-[3/4] rounded-xl cursor-pointer perspective-1000 relative transition-all duration-300 ${isFlipped ? '' : 'hover:scale-105'}`}
+                            >
+                                <div className={`w-full h-full transition-all duration-500 transform-style-3d relative ${isFlipped ? 'rotate-y-180' : ''}`}>
+                                    {/* DORSO (Boca abajo) */}
+                                    <div className={`absolute inset-0 backface-hidden bg-emerald-600 rounded-xl border-2 border-emerald-700 flex items-center justify-center ${isFlipped ? 'opacity-0' : 'opacity-100'}`}>
+                                        <Grid3x3 className="text-white/30 w-8 h-8" />
+                                    </div>
+                                    
+                                    {/* FRENTE (Boca arriba) */}
+                                    <div className={`absolute inset-0 backface-hidden bg-white rounded-xl border-2 border-emerald-500 flex items-center justify-center p-2 text-center shadow-md ${isFlipped ? 'opacity-100 rotate-y-180' : 'opacity-0'}`}>
+                                        <span className={`font-bold ${card.type === 'ar' ? 'font-arabic text-xl' : 'text-sm'}`} dir={card.type === 'ar' ? 'rtl' : 'ltr'}>
+                                            {card.content}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </div>
       </div>
     </div>
