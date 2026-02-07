@@ -90,6 +90,7 @@ export default function App() {
         safetyCounter++;
       }
 
+      // Eliminar duplicados basándonos en ID para evitar errores de renderizado
       const uniqueCards = Array.from(new Map(allData.map(item => [item.id, item])).values());
       setCards(uniqueCards);
     } catch (error) {
@@ -511,6 +512,104 @@ function MemoryGame({ onBack, onClose, cards }) {
   );
 }
 
+// --- COMPONENTE FLASHCARD BLINDADO ---
+function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
+  const [flipState, setFlipState] = useState(0);
+  
+  // Reiniciar estado al cambiar idioma
+  useEffect(() => { setFlipState(0); }, [frontLanguage]);
+
+  const handleNextFace = () => { 
+    if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); 
+  };
+
+  const playAudio = (e) => {
+    e.stopPropagation();
+    const utterance = new SpeechSynthesisUtterance(data?.arabic || "");
+    utterance.lang = 'ar-SA';
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const spanishText = data?.spanish || "Sin texto";
+  const arabicText = data?.arabic || "Sin texto";
+  const phoneticText = data?.phonetic || "N/A";
+  const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText);
+  const tags = data?.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
+
+  // CÁLCULO DIRECTO DEL CONTENIDO A MOSTRAR
+  let content = null;
+
+  if (isAdmin) {
+    content = (
+      <>
+        <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{spanishText}</h3>
+        <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayArabic}</h3>
+        <p className="text-sm font-mono text-amber-700 italic opacity-80">{phoneticText}</p>
+      </>
+    );
+  } else if (flipState === 2) {
+    content = (
+      <>
+        <p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p>
+        <h3 className="text-lg font-mono text-amber-800 italic">{phoneticText}</h3>
+      </>
+    );
+  } else {
+    // Determinar idioma actual: Español o Árabe
+    const isFront = flipState === 0;
+    const currentLang = isFront ? frontLanguage : (frontLanguage === 'spanish' ? 'arabic' : 'spanish');
+
+    if (currentLang === 'spanish') {
+      content = (
+        <>
+          <p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p>
+          <h3 className="text-xl font-bold text-slate-800">{spanishText}</h3>
+        </>
+      );
+    } else {
+      content = (
+        <>
+          <p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p>
+          <h3 className="text-3xl font-arabic text-emerald-900 mb-4" dir="rtl">{displayArabic}</h3>
+          <button onClick={playAudio} className="p-2 bg-emerald-200 text-emerald-800 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button>
+        </>
+      );
+    }
+  }
+
+  // Estilos de fondo
+  let bgClass = "bg-white border-slate-200 text-slate-800";
+  if (!isAdmin) {
+    if (flipState === 0) bgClass = "bg-orange-50 border-orange-100 text-slate-800";
+    if (flipState === 1) bgClass = "bg-emerald-50 border-emerald-200 text-emerald-900";
+    if (flipState === 2) bgClass = "bg-amber-100 border-amber-200 text-amber-900";
+  }
+
+  return (
+    <div 
+      onClick={handleNextFace}
+      className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}
+    >
+      {isAdmin && (
+        <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
+        {content}
+      </div>
+
+      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">
+        {tags.map((tag, i) => (
+          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // --- MODAL DE MANTENIMIENTO BD ---
 function MaintenanceModal({ onClose, cards, refreshCards }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
@@ -657,234 +756,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                     }
                 </div>
             )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// --- COMPONENTE FLASHCARD - REESCRITO PARA SER INDESTRUCTIBLE ---
-function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
-  const [flipState, setFlipState] = useState(0);
-  
-  // Resetear al cambiar preferencia de idioma
-  useEffect(() => { setFlipState(0); }, [frontLanguage]);
-
-  const handleNextFace = () => { 
-    if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); 
-  };
-
-  const playAudio = (e) => {
-    e.stopPropagation();
-    const utterance = new SpeechSynthesisUtterance(data?.arabic || "");
-    utterance.lang = 'ar-SA';
-    window.speechSynthesis.speak(utterance);
-  };
-
-  // Safe data access
-  const spanishText = data?.spanish || "Sin texto";
-  const arabicText = data?.arabic || "Sin texto";
-  const phoneticText = data?.phonetic || "";
-  const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText);
-  const tags = data?.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
-
-  // Card Background Logic - simple and robust
-  let bgClass = "bg-white";
-  if (flipState === 0) bgClass = "bg-orange-50 border-orange-100 text-slate-800"; // Spanish Face
-  if (flipState === 1) bgClass = "bg-emerald-50 border-emerald-200 text-emerald-900"; // Arabic Face
-  if (flipState === 2) bgClass = "bg-amber-100 border-amber-200 text-amber-900"; // Phonetic Face
-  if (isAdmin) bgClass = "bg-white border-slate-200 text-slate-800"; // Admin overrides
-
-  return (
-    <div 
-      onClick={handleNextFace}
-      className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}
-    >
-      {/* Admin Buttons */}
-      {isAdmin && (
-        <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
-          <button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
-        </div>
-      )}
-
-      {/* Content Area - Renderizado condicional directo en JSX */}
-      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
-        
-        {/* MODO ADMIN: Muestra todo */}
-        {isAdmin ? (
-           <>
-             <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{spanishText}</h3>
-             <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayArabic}</h3>
-             <p className="text-sm font-mono text-amber-700 italic opacity-80">{phoneticText}</p>
-           </>
-        ) : (
-           // MODO USUARIO: Máquina de estados simple
-           <>
-             {/* CARA 3: FONÉTICA */}
-             {flipState === 2 && (
-                <>
-                    <p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p>
-                    <h3 className="text-lg font-mono text-amber-800 italic">{phoneticText}</h3>
-                </>
-             )}
-
-             {/* CARA ESPAÑOL (Si empieza en ES y está en 0, O si empieza en AR y está en 1) */}
-             {flipState !== 2 && ((frontLanguage === 'spanish' && flipState === 0) || (frontLanguage === 'arabic' && flipState === 1)) && (
-                <>
-                    <p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p>
-                    <h3 className="text-xl font-bold">{spanishText}</h3>
-                </>
-             )}
-
-             {/* CARA ÁRABE (Si empieza en AR y está en 0, O si empieza en ES y está en 1) */}
-             {flipState !== 2 && ((frontLanguage === 'arabic' && flipState === 0) || (frontLanguage === 'spanish' && flipState === 1)) && (
-                <>
-                    <p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p>
-                    <h3 className="text-3xl font-arabic mb-4" dir="rtl">{displayArabic}</h3>
-                    <button onClick={playAudio} className="p-2 bg-emerald-200 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button>
-                </>
-             )}
-           </>
-        )}
-      </div>
-
-      {/* Footer Categorías */}
-      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">
-        {tags.map((tag, i) => (
-          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">
-            {tag}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function CardFormModal({ card, categories, onSave, onClose }) {
-  const [formData, setFormData] = useState({
-    category: card?.category || "",
-    spanish: card?.spanish || "",
-    arabic: card?.arabic || "",
-    phonetic: card?.phonetic || "",
-    id: card?.id || null
-  });
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-fade-in-up">
-        <div className="bg-slate-800 px-6 py-4 flex justify-between items-center text-white">
-          <h2 className="text-lg font-bold flex items-center gap-2">{card ? <Edit2 className="w-5 h-5" /> : <Plus className="w-5 h-5" />}{card ? "Editar Tarjeta" : "Nueva Tarjeta"}</h2>
-          <button onClick={onClose} className="hover:bg-slate-700 p-1 rounded transition"><X className="w-5 h-5" /></button>
-        </div>
-        <form onSubmit={(e) => { e.preventDefault(); onSave(formData); }} className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría(s)</label>
-            <div className="bg-blue-50 text-blue-800 text-xs p-2 rounded mb-2 border border-blue-100 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4" />
-                <span>Tip: Usa <strong>punto y coma (;)</strong> para asignar múltiples categorías.</span>
-            </div>
-            <input list="categories-list" type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} placeholder="Ej: Pista 1; Saludos" />
-            <datalist id="categories-list">{categories.map(cat => <option key={cat} value={cat} />)}</datalist>
-          </div>
-          <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Español</label><input type="text" required className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-medium" value={formData.spanish} onChange={e => setFormData({...formData, spanish: e.target.value})} /></div>
-          <div className="grid grid-cols-2 gap-4">
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Árabe</label><input type="text" required dir="rtl" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-arabic text-lg" value={formData.arabic} onChange={e => setFormData({...formData, arabic: e.target.value})} /></div>
-            <div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label><input type="text" className="w-full p-2 border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-emerald-500 font-mono text-sm" value={formData.phonetic} onChange={e => setFormData({...formData, phonetic: e.target.value})} /></div>
-          </div>
-          <div className="pt-4 flex justify-end gap-3 border-t mt-4">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg font-medium">Cancelar</button>
-            <button type="submit" className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold flex items-center gap-2"><Save className="w-4 h-4" /> Guardar</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function SmartImportModal({ onClose, onImport }) {
-  const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
-  const [activeTab, setActiveTab] = useState('text'); 
-  const [textInput, setTextInput] = useState("");
-  const [imageFile, setImageFile] = useState(null);
-  const [pdfFile, setPdfFile] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [generatedCards, setGeneratedCards] = useState([]);
-  const [status, setStatus] = useState("");
-
-  const handleApiKeyChange = (e) => {
-    setApiKey(e.target.value);
-    localStorage.setItem('openai_key', e.target.value);
-  };
-
-  const extractTextFromPDF = async (file) => {
-    const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-    let fullText = "";
-    setStatus(`Leyendo PDF (${pdf.numPages} páginas)...`);
-    for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const pageText = textContent.items.map(item => item.str).join(' ');
-      fullText += `--- Página ${i} ---\n${pageText}\n`;
-    }
-    return fullText;
-  };
-
-  const handleGenerate = async () => {
-    if (!apiKey) { alert("Por favor introduce tu API Key de OpenAI"); return; }
-    if (activeTab === 'text' && !textInput) return;
-    if (activeTab === 'image' && !imageFile) return;
-    if (activeTab === 'pdf' && !pdfFile) return;
-
-    setLoading(true);
-    setStatus("Conectando con la IA...");
-
-    try {
-      const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
-      let prompt = `Actúa como traductor experto. Analiza texto en bruto. TU MISIÓN: Rescatar vocabulario. REGLAS: 1. PRECISIÓN. 2. NUNACIÓN: Elimina tanwin final salvo excepciones. 3. Busca palabras/frases. 4. CATEGORÍA: Sugiere "Frases" o tema lógico. 5. Separa categorías con PUNTO Y COMA (;). Devuelve JSON válido: [{ "category": "...", "spanish": "...", "arabic": "...", "phonetic": "..." }]`;
-      let userContent = "";
-      if (activeTab === 'text') userContent = [{ type: "text", text: `Lista: ${textInput}` }];
-      else if (activeTab === 'pdf') { const pdfText = await extractTextFromPDF(pdfFile); userContent = [{ type: "text", text: `PDF: ${pdfText}` }]; }
-      else { const base64Image = await new Promise((r) => { const reader = new FileReader(); reader.onloadend = () => r(reader.result); reader.readAsDataURL(imageFile); }); userContent = [{ type: "text", text: "Imagen:" }, { type: "image_url", image_url: { url: base64Image } }]; }
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o", 
-        messages: [{ role: "system", content: prompt }, { role: "user", content: userContent }],
-        max_tokens: 3000,
-      });
-      const rawContent = response.choices[0].message.content;
-      const start = rawContent.indexOf('['); const end = rawContent.lastIndexOf(']');
-      if (start !== -1 && end !== -1) {
-          setGeneratedCards(JSON.parse(rawContent.substring(start, end + 1)));
-          setStatus("¡Hecho!");
-      } else { throw new Error("No se encontró JSON válido"); }
-    } catch (error) { console.error(error); alert("Error: " + error.message); setStatus("Error."); } finally { setLoading(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="bg-purple-700 px-6 py-4 flex justify-between items-center text-white shrink-0"><h2 className="text-lg font-bold flex items-center gap-2"><Wand2 className="w-5 h-5" /> Importador Mágico IA</h2><button onClick={onClose} className="hover:bg-purple-600 p-1 rounded transition"><X className="w-5 h-5" /></button></div>
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-6 p-4 bg-purple-50 rounded-lg border border-purple-100"><label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label><input type="password" placeholder="sk-..." className="w-full p-2 border border-purple-200 rounded bg-white text-sm" value={apiKey} onChange={handleApiKeyChange} /></div>
-          {generatedCards.length === 0 ? (
-            <div className="space-y-6">
-              <div className="flex border-b border-slate-200"><button onClick={() => setActiveTab('text')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'text' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <FileText className="w-4 h-4" /> Texto </button><button onClick={() => setActiveTab('image')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'image' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <ImageIcon className="w-4 h-4" /> Imagen </button><button onClick={() => setActiveTab('pdf')} className={`px-4 py-2 text-sm font-bold flex items-center gap-2 border-b-2 transition ${activeTab === 'pdf' ? 'border-purple-600 text-purple-700' : 'text-slate-500'}`}> <FileUp className="w-4 h-4" /> PDF </button></div>
-              <div className="min-h-[200px] flex flex-col justify-center">
-                {activeTab === 'text' && <textarea className="w-full h-40 p-4 border border-slate-300 rounded-lg focus:ring-2 focus:ring-purple-500 outline-none resize-none" placeholder="Escribe lista..." value={textInput} onChange={(e) => setTextInput(e.target.value)} />}
-                {activeTab === 'image' && <div className="border-2 border-dashed border-slate-300 rounded-lg p-10 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 relative"><input type="file" accept="image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => setImageFile(e.target.files[0])} />{imageFile ? <p className="text-purple-600 font-bold">{imageFile.name}</p> : <><ImageIcon className="w-10 h-10 opacity-50"/><p>Sube imagen</p></>}</div>}
-                {activeTab === 'pdf' && <div className="border-2 border-dashed border-slate-300 rounded-lg p-10 flex flex-col items-center justify-center text-slate-500 hover:bg-slate-50 relative"><input type="file" accept="application/pdf" className="absolute inset-0 opacity-0 cursor-pointer" onChange={(e) => setPdfFile(e.target.files[0])} />{pdfFile ? <p className="text-red-600 font-bold">{pdfFile.name}</p> : <><FileUp className="w-10 h-10 opacity-50"/><p>Sube PDF</p></>}</div>}
-              </div>
-              <button onClick={handleGenerate} disabled={loading || !apiKey} className="w-full py-4 bg-gradient-to-r from-purple-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50">{loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Wand2 className="w-5 h-5" />} {loading ? status : "Generar Tarjetas"}</button>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex justify-between items-center"><h3 className="font-bold text-lg text-slate-700">Vista Previa ({generatedCards.length})</h3><button onClick={() => setGeneratedCards([])} className="text-xs text-red-500 hover:underline">Descartar</button></div>
-              <div className="grid gap-2 max-h-[400px] overflow-y-auto">{generatedCards.map((card, i) => (<div key={i} className="flex items-center gap-3 p-3 bg-white border border-slate-200 rounded-lg shadow-sm"><div className="w-8 h-8 bg-purple-100 text-purple-700 rounded-full flex items-center justify-center font-bold text-xs">{i+1}</div><div className="flex-1 grid grid-cols-4 gap-2 text-sm"><div className="font-bold text-slate-500 text-xs uppercase">{card.category}</div><div className="font-bold text-slate-800">{card.spanish}</div><div className="font-arabic text-emerald-700 text-right" dir="rtl">{card.arabic}</div><div className="font-mono text-slate-400 text-xs italic">{card.phonetic}</div></div></div>))}</div>
-              <div className="p-4 border-t flex justify-end gap-3"><button onClick={onClose} className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-lg">Cancelar</button><button onClick={() => onImport(generatedCards)} className="px-6 py-2 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-700 flex items-center gap-2"><CheckCircle className="w-4 h-4" /> Importar</button></div>
-            </div>
-          )}
         </div>
       </div>
     </div>
