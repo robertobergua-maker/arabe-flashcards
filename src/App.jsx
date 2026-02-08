@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist'; 
@@ -7,7 +7,7 @@ import {
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
   Settings, AlertTriangle, ArrowRight, Check, Gamepad2, Trophy, Frown, PartyPopper,
-  Grid3x3, BrainCircuit, ArrowLeft
+  Grid3x3, BrainCircuit, ArrowLeft, Zap, Timer
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -36,6 +36,15 @@ const shuffleArray = (array) => {
     [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
   }
   return newArray;
+};
+
+// NUEVA: Detecta si es Frase o Palabra para equilibrar juegos
+const getCardType = (card) => {
+    // Si la categoría es explícitamente "Frases", es frase.
+    if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase';
+    // Si no, miramos la longitud: más de 2 palabras suele ser frase
+    const wordCount = (card.spanish || "").trim().split(/\s+/).length;
+    return wordCount > 2 ? 'phrase' : 'word';
 };
 
 export default function App() {
@@ -296,12 +305,13 @@ export default function App() {
   );
 }
 
-// --- HUB DE JUEGOS Y LÓGICA DE JUEGOS ---
+// --- HUB DE JUEGOS ---
 function GamesHub({ onClose, cards }) {
   const [activeGame, setActiveGame] = useState('menu'); 
 
   if (activeGame === 'quiz') return <QuizGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} />;
   if (activeGame === 'memory') return <MemoryGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} />;
+  if (activeGame === 'truefalse') return <TrueFalseGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} />;
 
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -314,13 +324,13 @@ function GamesHub({ onClose, cards }) {
           <button onClick={onClose} className="hover:bg-slate-700 p-2 rounded-full transition"><X className="w-6 h-6" /></button>
         </div>
 
-        <div className="p-8 bg-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="p-8 bg-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto max-h-[70vh]">
           <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200">
             <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
               <BrainCircuit className="w-7 h-7" />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3>
-            <p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción correcta de entre 4 opciones antes de que pierdas la racha.</p>
+            <p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción correcta. (Se separan palabras de frases)</p>
           </button>
 
           <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200">
@@ -328,7 +338,15 @@ function GamesHub({ onClose, cards }) {
               <Grid3x3 className="w-7 h-7" />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">Memoria de Parejas</h3>
-            <p className="text-sm text-slate-500">Ejercita tu mente. Encuentra las parejas de cartas (Español - Árabe) ocultas en el tablero.</p>
+            <p className="text-sm text-slate-500">Ejercita tu mente. Juega con tablero de solo palabras o solo frases.</p>
+          </button>
+
+          <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200 md:col-span-2">
+            <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-rose-600 group-hover:text-white transition-colors">
+              <Zap className="w-7 h-7" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Verdadero o Falso</h3>
+            <p className="text-sm text-slate-500">Modo Velocidad. ¿Coinciden? Los engaños serán astutos (mismo tipo de palabra/frase).</p>
           </button>
         </div>
         
@@ -340,6 +358,7 @@ function GamesHub({ onClose, cards }) {
   );
 }
 
+// JUEGO 1: QUIZ (Inteligente: Palabras vs Frases)
 function QuizGame({ onBack, onClose, cards }) {
   const [currentRound, setCurrentRound] = useState(null);
   const [score, setScore] = useState(0);
@@ -351,13 +370,27 @@ function QuizGame({ onBack, onClose, cards }) {
 
   const startNewRound = () => {
     if (cards.length < 4) return;
+    
+    // 1. Elegimos carta correcta
     const correctCard = cards[Math.floor(Math.random() * cards.length)];
-    let distractors = [];
-    while (distractors.length < 3) {
-      const random = cards[Math.floor(Math.random() * cards.length)];
-      if (random.id !== correctCard.id && !distractors.find(d => d.id === random.id)) distractors.push(random);
+    const targetType = getCardType(correctCard); // 'word' o 'phrase'
+
+    // 2. Buscamos distractores DEL MISMO TIPO
+    let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType);
+    
+    // Fallback: si no hay suficientes candidatos del mismo tipo, cogemos cualquiera
+    if (candidates.length < 3) {
+        candidates = cards.filter(c => c.id !== correctCard.id);
     }
-    setCurrentRound({ question: correctCard, options: shuffleArray([correctCard, ...distractors]) });
+
+    // 3. Seleccionamos 3 aleatorios
+    const shuffledCandidates = shuffleArray(candidates);
+    const distractors = shuffledCandidates.slice(0, 3);
+
+    setCurrentRound({ 
+        question: correctCard, 
+        options: shuffleArray([correctCard, ...distractors]) 
+    });
     setSelectedOption(null);
     setIsCorrect(null);
   };
@@ -417,7 +450,7 @@ function QuizGame({ onBack, onClose, cards }) {
   );
 }
 
-// JUEGO 2: MEMORIA CON RENDERIZADO SEGURO
+// JUEGO 2: MEMORIA (Monotemático: O Palabras O Frases)
 function MemoryGame({ onBack, onClose, cards }) {
   const [gameCards, setGameCards] = useState([]);
   const [flipped, setFlipped] = useState([]); 
@@ -430,8 +463,17 @@ function MemoryGame({ onBack, onClose, cards }) {
   }, []);
 
   const startNewGame = () => {
-    if (cards.length < 6) return;
-    const selectedPairs = shuffleArray([...cards]).slice(0, 6);
+    // 1. Decidir tipo de juego al azar: Palabras (words) o Frases (phrases)
+    const gameType = Math.random() > 0.5 ? 'word' : 'phrase';
+    
+    // 2. Filtrar cartas de ese tipo
+    let pool = cards.filter(c => getCardType(c) === gameType);
+    
+    // Fallback: Si no hay suficientes de ese tipo, usamos todas
+    if (pool.length < 6) pool = cards;
+    if (pool.length < 6) return; // Si aún así no hay, salir (raro)
+
+    const selectedPairs = shuffleArray([...pool]).slice(0, 6);
     const deck = [];
     selectedPairs.forEach(pair => {
       deck.push({ id: pair.id, content: pair.spanish, type: 'es', pairId: pair.id });
@@ -494,7 +536,6 @@ function MemoryGame({ onBack, onClose, cards }) {
                     {gameCards.map((card, index) => {
                         const isFlipped = flipped.includes(index) || matched.includes(card.pairId);
                         
-                        // ESTILOS INLINE PARA GARANTIZAR QUE LA ROTACIÓN 3D FUNCIONE SÍ O SÍ
                         return (
                             <div 
                                 key={index} 
@@ -508,16 +549,12 @@ function MemoryGame({ onBack, onClose, cards }) {
                                         transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' 
                                     }}
                                 >
-                                    
-                                    {/* CARA TRASERA (Grid/Logo) - Visible cuando NO flippeada */}
                                     <div 
                                         className="absolute inset-0 backface-hidden bg-emerald-600 rounded-xl border-2 border-emerald-700 flex items-center justify-center shadow-md"
                                         style={{ backfaceVisibility: 'hidden' }}
                                     >
                                         <Grid3x3 className="text-white/30 w-10 h-10" />
                                     </div>
-
-                                    {/* CARA DELANTERA (Texto) - Visible cuando flippeada (ya rotada 180 para que al girar quede bien) */}
                                     <div 
                                         className="absolute inset-0 backface-hidden bg-white rounded-xl border-2 border-emerald-500 flex items-center justify-center p-2 text-center shadow-md"
                                         style={{ 
@@ -539,6 +576,175 @@ function MemoryGame({ onBack, onClose, cards }) {
                 </div>
             )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// JUEGO 3: VERDADERO O FALSO (Inteligente)
+function TrueFalseGame({ onBack, onClose, cards }) {
+  const [round, setRound] = useState(null);
+  const [score, setScore] = useState(0);
+  const [timer, setTimer] = useState(300); 
+  const [gameOver, setGameOver] = useState(false);
+  const [gameState, setGameState] = useState('playing'); 
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    startNewRound();
+    return () => clearInterval(timerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (timer <= 0 && gameState === 'playing') {
+      endGame();
+    }
+  }, [timer]);
+
+  const startNewRound = () => {
+    if (cards.length < 5) return;
+    
+    // 1. Carta base
+    const baseCard = cards[Math.floor(Math.random() * cards.length)];
+    const targetType = getCardType(baseCard);
+
+    // 2. Decide si es verdadero o falso
+    const isMatch = Math.random() > 0.5;
+    
+    let arabicText = baseCard.arabic;
+    if (!isMatch) {
+        // 3. Buscar distractor DEL MISMO TIPO
+        let candidates = cards.filter(c => c.id !== baseCard.id && getCardType(c) === targetType);
+        if (candidates.length === 0) candidates = cards.filter(c => c.id !== baseCard.id); // fallback
+
+        const distractor = candidates[Math.floor(Math.random() * candidates.length)];
+        arabicText = distractor.arabic;
+    }
+
+    setRound({
+        spanish: baseCard.spanish,
+        arabic: arabicText,
+        isMatch: isMatch
+    });
+    
+    setTimer(300); 
+    setGameState('playing');
+    
+    clearInterval(timerRef.current);
+    timerRef.current = setInterval(() => {
+        setTimer(prev => prev - 10);
+    }, 100);
+  };
+
+  const handleChoice = (choice) => { 
+    if (gameState !== 'playing') return;
+    
+    clearInterval(timerRef.current);
+    
+    if (choice === round.isMatch) {
+        setGameState('correct');
+        setScore(s => s + 1);
+        setTimeout(startNewRound, 500);
+    } else {
+        setGameState('incorrect');
+        setGameOver(true);
+    }
+  };
+
+  const endGame = () => {
+    clearInterval(timerRef.current);
+    setGameState('timeout');
+    setGameOver(true);
+  };
+
+  const restartGame = () => {
+    setScore(0);
+    setGameOver(false);
+    startNewRound();
+  };
+
+  if (!round) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col relative h-[500px]">
+        {/* Header */}
+        <div className="bg-rose-600 p-4 text-white flex justify-between items-center shrink-0">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="hover:bg-rose-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button>
+            <h2 className="font-bold text-lg">Velocidad</h2>
+          </div>
+          <button onClick={onClose} className="hover:bg-rose-500 p-1 rounded"><X className="w-6 h-6" /></button>
+        </div>
+
+        {gameOver ? (
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-fade-in-up">
+                <Frown className="w-20 h-20 text-rose-500 mb-4" />
+                <h3 className="text-3xl font-black text-slate-800 mb-2">¡Fin del Juego!</h3>
+                <p className="text-slate-500 mb-2">
+                    {gameState === 'timeout' ? "¡Se acabó el tiempo!" : "¡Respuesta incorrecta!"}
+                </p>
+                <div className="text-4xl font-black text-rose-600 mb-8">{score} Puntos</div>
+                <button onClick={restartGame} className="w-full bg-rose-600 text-white py-3 rounded-xl font-bold shadow-lg hover:bg-rose-700 transition">Intentar de nuevo</button>
+            </div>
+        ) : (
+            <div className="flex-1 flex flex-col relative">
+                {/* Timer Bar */}
+                <div className="h-2 bg-slate-200 w-full">
+                    <div 
+                        className={`h-full transition-all duration-100 ease-linear ${timer < 100 ? 'bg-red-500' : 'bg-green-500'}`} 
+                        style={{ width: `${(timer / 300) * 100}%` }}
+                    />
+                </div>
+
+                <div className="p-4 flex justify-between items-center text-rose-800 font-bold bg-rose-50">
+                    <span className="flex items-center gap-2"><Trophy className="w-4 h-4"/> Puntuación</span>
+                    <span className="text-xl">{score}</span>
+                </div>
+
+                <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
+                    <div className="text-center w-full">
+                        <p className="text-xs uppercase font-bold text-slate-400 mb-2">ESPAÑOL</p>
+                        <h3 className="text-2xl font-bold text-slate-800 border-b-2 border-slate-100 pb-4 w-full">{round.spanish}</h3>
+                    </div>
+                    
+                    <div className="text-center w-full">
+                        <p className="text-xs uppercase font-bold text-slate-400 mb-2">ÁRABE</p>
+                        <h3 className="text-4xl font-bold font-arabic text-rose-700 py-2" dir="rtl">{round.arabic}</h3>
+                    </div>
+                </div>
+
+                {/* Botones Acción */}
+                <div className="p-4 grid grid-cols-2 gap-4 bg-slate-50 border-t border-slate-200">
+                    <button 
+                        onClick={() => handleChoice(false)} 
+                        className="py-4 rounded-xl bg-red-100 text-red-700 font-bold border-2 border-red-200 hover:bg-red-200 hover:border-red-300 transition flex flex-col items-center gap-1"
+                    >
+                        <X className="w-6 h-6" />
+                        NO
+                    </button>
+                    <button 
+                        onClick={() => handleChoice(true)} 
+                        className="py-4 rounded-xl bg-green-100 text-green-700 font-bold border-2 border-green-200 hover:bg-green-200 hover:border-green-300 transition flex flex-col items-center gap-1"
+                    >
+                        <Check className="w-6 h-6" />
+                        SÍ
+                    </button>
+                </div>
+
+                {/* Feedback Overlay */}
+                {gameState === 'correct' && (
+                    <div className="absolute inset-0 bg-green-500/90 flex items-center justify-center z-10 animate-fade-in">
+                        <CheckCircle className="w-20 h-20 text-white animate-bounce" />
+                    </div>
+                )}
+                {gameState === 'incorrect' && (
+                    <div className="absolute inset-0 bg-red-500/90 flex items-center justify-center z-10 animate-fade-in">
+                        <X className="w-20 h-20 text-white animate-shake" />
+                    </div>
+                )}
+            </div>
+        )}
       </div>
     </div>
   );
@@ -586,7 +792,6 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
       </>
     );
   } else {
-    // Determinar idioma actual: Español o Árabe
     const isFront = flipState === 0;
     const currentLang = isFront ? frontLanguage : (frontLanguage === 'spanish' ? 'arabic' : 'spanish');
 
@@ -608,7 +813,6 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
     }
   }
 
-  // Estilos de fondo
   let bgClass = "bg-white border-slate-200 text-slate-800";
   if (!isAdmin) {
     if (flipState === 0) bgClass = "bg-orange-50 border-orange-100 text-slate-800";
