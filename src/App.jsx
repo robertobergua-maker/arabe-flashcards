@@ -7,7 +7,7 @@ import {
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
   Settings, AlertTriangle, ArrowRight, Check, Gamepad2, Trophy, Frown, PartyPopper,
-  Grid3x3, BrainCircuit, ArrowLeft, Zap, Timer, Puzzle, Music, PlayCircle, HelpCircle, Grid, Edit3, Mic, Activity, Clock
+  Grid3x3, ArrowLeft, Zap, Timer, Music, PlayCircle, HelpCircle, Edit3, Clock, Activity
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -38,12 +38,10 @@ const shuffleArray = (array) => {
   return newArray;
 };
 
-// Alfabeto básico para generar distractores
 const ARABIC_ALPHABET = [
   'ا', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'ه', 'و', 'ي'
 ];
 
-// Función blindada para obtener tipo de tarjeta
 const getCardType = (card) => {
     if (!card) return 'word';
     if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase';
@@ -61,7 +59,6 @@ export default function App() {
   const [frontLanguage, setFrontLanguage] = useState("spanish");
   const [showDiacritics, setShowDiacritics] = useState(true);
   
-  // ESTADOS ADMIN / MODALES
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [editingCard, setEditingCard] = useState(null); 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -69,7 +66,6 @@ export default function App() {
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isGamesHubOpen, setIsGamesHubOpen] = useState(false); 
 
-  // --- CARGAR DATOS ---
   useEffect(() => {
     fetchAllCards();
   }, []);
@@ -120,8 +116,6 @@ export default function App() {
       const password = prompt("🔒 Introduce la contraseña de administrador:");
       if (password === "1234") { 
         setIsAdminMode(true);
-      } else if (password !== null) {
-        alert("⛔ Contraseña incorrecta");
       }
     }
   };
@@ -166,7 +160,6 @@ export default function App() {
         setIsSmartImportOpen(false);
       }
     } catch (error) {
-      console.error("Error Supabase:", error);
       alert("Error importando: " + error.message);
     }
   };
@@ -262,7 +255,7 @@ export default function App() {
                     className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors flex items-center justify-center shadow-lg"
                     title="Juegos de Práctica"
                 >
-                    <PlayCircle className="w-6 h-6" />
+                    <Gamepad2 className="w-5 h-5" />
                 </button>
 
                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
@@ -343,7 +336,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
           {/* Tarjeta Memory */}
           <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200">
             <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-              <Grid className="w-7 h-7" />
+              <Grid3x3 className="w-7 h-7" />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3>
             <p className="text-sm text-slate-500">Ejercita tu mente. Encuentra las parejas ocultas.</p>
@@ -355,7 +348,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
               <Zap className="w-7 h-7" />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3>
-            <p className="text-sm text-slate-500">Verdadero o Falso. Elige tu dificultad (3s, 5s, 10s).</p>
+            <p className="text-sm text-slate-500">Verdadero o Falso. Tienes 3, 5 o 10 segundos.</p>
           </button>
 
           {/* Tarjeta Letras */}
@@ -370,7 +363,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
           {/* Tarjeta Listening */}
           <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200 md:col-span-2">
             <div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-cyan-600 group-hover:text-white transition-colors">
-              <Mic className="w-7 h-7" />
+              <Music className="w-7 h-7" />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3>
             <p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado. ¡Entrena tu oído!</p>
@@ -398,9 +391,11 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
   const startNewRound = () => {
     if (cards.length < 4) return;
     
+    // 1. Elegir carta correcta
     const correctCard = cards[Math.floor(Math.random() * cards.length)];
     const targetType = getCardType(correctCard);
 
+    // 2. Elegir distractores del mismo tipo
     let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType);
     if (candidates.length < 3) candidates = cards.filter(c => c.id !== correctCard.id);
     const distractors = shuffleArray(candidates).slice(0, 3);
@@ -823,7 +818,7 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
                                     style={{ transformStyle: 'preserve-3d', transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}
                                 >
                                     <div className="absolute inset-0 backface-hidden bg-emerald-600 rounded-xl border-2 border-emerald-700 flex items-center justify-center shadow-md" style={{ backfaceVisibility: 'hidden' }}>
-                                        <Grid className="text-white/30 w-10 h-10" />
+                                        <Grid3x3 className="text-white/30 w-10 h-10" />
                                     </div>
                                     <div className="absolute inset-0 backface-hidden bg-white rounded-xl border-2 border-emerald-500 flex items-center justify-center p-2 text-center shadow-md" style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}>
                                         <span className={`font-bold text-slate-800 ${card.type === 'ar' ? 'font-arabic text-xl' : 'text-sm'}`} dir={card.type === 'ar' ? 'rtl' : 'ltr'}>
@@ -924,6 +919,12 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
     setGameOver(true);
   };
 
+  const restartGame = () => {
+    setScore(0);
+    setGameOver(false);
+    startNewRound();
+  };
+
   if (gameState === 'menu') {
       return (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1022,6 +1023,253 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
                 )}
             </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// --- COMPONENTE FLASHCARD INDESTRUCTIBLE ---
+function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
+  const [flipState, setFlipState] = useState(0);
+  
+  useEffect(() => { setFlipState(0); }, [frontLanguage]);
+
+  const handleNextFace = () => { 
+    if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); 
+  };
+
+  const playAudio = (e) => {
+    e.stopPropagation();
+    const utterance = new SpeechSynthesisUtterance(data?.arabic || "");
+    utterance.lang = 'ar-SA';
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const spanishText = data?.spanish || "Sin texto";
+  const arabicText = data?.arabic || "Sin texto";
+  const phoneticText = data?.phonetic || "N/A";
+  const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText);
+  const tags = data?.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
+
+  // CÁLCULO DIRECTO DEL CONTENIDO A MOSTRAR
+  let content = null;
+
+  if (isAdmin) {
+    content = (
+      <>
+        <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{spanishText}</h3>
+        <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayArabic}</h3>
+        <p className="text-sm font-mono text-amber-700 italic opacity-80">{phoneticText}</p>
+      </>
+    );
+  } else if (flipState === 2) {
+    content = (
+      <>
+        <p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p>
+        <h3 className="text-lg font-mono text-amber-800 italic">{phoneticText}</h3>
+      </>
+    );
+  } else {
+    const isFront = flipState === 0;
+    const currentLang = isFront ? frontLanguage : (frontLanguage === 'spanish' ? 'arabic' : 'spanish');
+
+    if (currentLang === 'spanish') {
+      content = (
+        <>
+          <p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p>
+          <h3 className="text-xl font-bold text-slate-800">{spanishText}</h3>
+        </>
+      );
+    } else {
+      content = (
+        <>
+          <p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p>
+          <h3 className="text-3xl font-arabic text-emerald-900 mb-4" dir="rtl">{displayArabic}</h3>
+          <button onClick={playAudio} className="p-2 bg-emerald-200 text-emerald-800 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button>
+        </>
+      );
+    }
+  }
+
+  let bgClass = "bg-white border-slate-200 text-slate-800";
+  if (!isAdmin) {
+    if (flipState === 0) bgClass = "bg-orange-50 border-orange-100 text-slate-800";
+    if (flipState === 1) bgClass = "bg-emerald-50 border-emerald-200 text-emerald-900";
+    if (flipState === 2) bgClass = "bg-amber-100 border-amber-200 text-amber-900";
+  }
+
+  return (
+    <div 
+      onClick={handleNextFace}
+      className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}
+    >
+      {isAdmin && (
+        <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
+        {content}
+      </div>
+
+      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">
+        {tags.map((tag, i) => (
+          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --- MODAL DE MANTENIMIENTO BD ---
+function MaintenanceModal({ onClose, cards, refreshCards }) {
+  const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
+  const [activeTab, setActiveTab] = useState('audit'); 
+  const [loading, setLoading] = useState(false);
+  const [logs, setLogs] = useState([]);
+  const [auditResults, setAuditResults] = useState([]);
+  const [duplicateGroups, setDuplicateGroups] = useState([]);
+
+  useEffect(() => {
+    if (activeTab === 'duplicates') {
+      const groups = {};
+      cards.forEach(c => {
+        if (!c.arabic) return;
+        const key = c.arabic.trim();
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(c);
+      });
+      const dups = Object.values(groups).filter(g => g.length > 1);
+      setDuplicateGroups(dups);
+    }
+  }, [activeTab, cards]);
+
+  const handleAudit = async () => {
+    if (!apiKey) { alert("Necesitas la API Key de OpenAI"); return; }
+    setLoading(true);
+    setAuditResults([]);
+    setLogs(["Iniciando auditoría lingüística..."]);
+
+    try {
+        const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
+        const batchSize = 20;
+        let allIssues = [];
+        const cardsToAudit = cards; 
+        
+        for (let i = 0; i < cardsToAudit.length; i += batchSize) {
+            const batch = cardsToAudit.slice(i, i + batchSize);
+            setLogs(prev => [`Analizando bloque ${i} - ${i+batchSize}...`, ...prev.slice(0,4)]);
+            
+            const miniBatch = batch.map(c => ({ id: c.id, arabic: c.arabic, spanish: c.spanish }));
+
+            const prompt = `Eres experto en árabe. Audita vocabulario. REGLAS: 1. ELIMINA TANWIN Damma/Kasra. 2. MANTÉN TANWIN Fath solo en adverbios (shukran, jiddan...). 3. Traduce bien. JSON: [{ "id": 123, "problem": "..", "suggestion": "..", "field": "arabic/spanish" }]`;
+
+            const response = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: [{ role: "user", content: prompt + ` DATOS: ${JSON.stringify(miniBatch)}` }],
+                temperature: 0.2
+            });
+
+            let rawContent = response.choices[0].message.content;
+            const start = rawContent.indexOf('[');
+            const end = rawContent.lastIndexOf(']');
+            if (start !== -1 && end !== -1) {
+                const batchIssues = JSON.parse(rawContent.substring(start, end + 1));
+                allIssues = [...allIssues, ...batchIssues];
+            }
+        }
+        setAuditResults(allIssues);
+        setLogs(prev => [`✅ Auditoría terminada. ${allIssues.length} sugerencias.`, ...prev]);
+    } catch (error) {
+        console.error(error);
+        setLogs(prev => [`❌ Error: ${error.message}`, ...prev]);
+    } finally {
+        setLoading(false);
+    }
+  };
+
+  const handleApplyFix = async (issue) => {
+    try {
+      const updateData = {};
+      if (issue.field === 'arabic' || !issue.field) updateData.arabic = issue.suggestion;
+      if (issue.field === 'spanish') updateData.spanish = issue.suggestion;
+      if (!issue.field) {
+         if (/[\u0600-\u06FF]/.test(issue.suggestion)) updateData.arabic = issue.suggestion;
+         else updateData.spanish = issue.suggestion;
+      }
+      await supabase.from('flashcards').update(updateData).eq('id', issue.id);
+      setAuditResults(prev => prev.filter(p => p.id !== issue.id));
+      await refreshCards(); 
+    } catch (err) {
+      alert("Error: " + err.message);
+    }
+  };
+
+  const handleDeleteDuplicate = async (id) => {
+    if(!confirm("¿Borrar?")) return;
+    await supabase.from('flashcards').delete().eq('id', id);
+    await refreshCards();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <div className="bg-blue-700 px-6 py-4 flex justify-between items-center text-white shrink-0">
+          <h2 className="text-lg font-bold flex items-center gap-2"><Settings className="w-5 h-5" /> Mantenimiento BD</h2>
+          <button onClick={onClose} className="hover:bg-blue-600 p-1 rounded transition"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex border-b border-slate-200 overflow-x-auto">
+            <button onClick={() => setActiveTab('audit')} className={`px-6 py-3 font-bold text-sm whitespace-nowrap ${activeTab === 'audit' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>1. Auditoría IA</button>
+            <button onClick={() => setActiveTab('duplicates')} className={`px-6 py-3 font-bold text-sm whitespace-nowrap ${activeTab === 'duplicates' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>2. Duplicados ({duplicateGroups.length})</button>
+        </div>
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
+            {activeTab === 'audit' && (
+                <div className="space-y-4">
+                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 mb-4">
+                        <label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label>
+                        <input type="password" placeholder="sk-..." className="w-full p-2 border border-purple-200 rounded bg-white text-sm" value={apiKey} onChange={(e) => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }} />
+                        <div className="flex gap-2 mt-3"><button onClick={handleAudit} disabled={loading || !apiKey} className="flex-1 bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50 flex justify-center gap-2">{loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <><Settings className="w-5 h-5" /> Auditar Todo (Lento)</>}</button></div>
+                    </div>
+                    {logs.length > 0 && <div className="bg-slate-900 text-green-400 font-mono text-[10px] p-3 rounded-lg max-h-32 overflow-y-auto mb-4 border border-slate-700 shadow-inner">{logs.map((log, i) => <div key={i}>{log}</div>)}</div>}
+                    {auditResults.length > 0 ? (
+                        <div className="space-y-3">
+                            <h3 className="font-bold text-slate-700 flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-amber-500"/> Sugerencias ({auditResults.length})</h3>
+                            {auditResults.map(issue => {
+                                const originalCard = cards.find(c => c.id === issue.id);
+                                if (!originalCard) return null;
+                                return (
+                                    <div key={issue.id} className="bg-white p-4 rounded-lg shadow-sm border border-slate-200 flex flex-col gap-3 hover:border-purple-300 transition-colors">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex items-center gap-2"><span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded font-mono">ID: {originalCard.id}</span></div>
+                                            <button onClick={() => setAuditResults(prev => prev.filter(p => p.id !== issue.id))} className="text-slate-300 hover:text-red-500"><X className="w-4 h-4"/></button>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="bg-red-50 p-3 rounded border border-red-100 relative"><span className="absolute top-1 right-2 text-[10px] font-bold text-red-300">ORIGINAL</span><p className="font-arabic text-xl text-slate-800 text-right mb-1" dir="rtl">{originalCard.arabic}</p><p className="text-sm text-slate-600">{originalCard.spanish}</p></div>
+                                            <div className="bg-green-50 p-3 rounded border border-green-100 relative"><span className="absolute top-1 right-2 text-[10px] font-bold text-green-600">SUGERENCIA</span><div className="flex flex-col h-full justify-center"><p className="font-bold text-lg text-green-800 text-center">{issue.suggestion}</p><p className="text-xs text-green-600 text-center mt-1 italic">{issue.problem}</p></div></div>
+                                        </div>
+                                        <button onClick={() => handleApplyFix(issue)} className="self-end bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 shadow-sm transition-transform active:scale-95"><Check className="w-4 h-4" /> Aplicar</button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    ) : !loading && logs.length > 0 && <div className="text-center text-slate-400 py-10">No hay errores pendientes.</div>}
+                </div>
+            )}
+            {activeTab === 'duplicates' && (
+                <div className="space-y-6">
+                    {duplicateGroups.length === 0 ? <div className="text-center text-slate-400 py-10 flex flex-col items-center"><CheckCircle className="w-12 h-12 mb-2 opacity-20"/><p>¡Limpio!</p></div> : 
+                        duplicateGroups.map((group, idx) => (
+                            <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center"><span className="font-bold text-slate-600 text-sm">Conflicto #{idx+1}</span><span className="font-arabic text-lg text-emerald-700 font-bold" dir="rtl">{group[0].arabic}</span></div>
+                                <div className="divide-y divide-slate-100">{group.map(card => (<div key={card.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors"><div className="flex items-center gap-3"><span className="text-xs text-slate-400 font-mono w-10">#{card.id}</span><div className="flex flex-col"><span className="font-bold text-slate-800">{card.spanish}</span><span className="text-[10px] text-slate-500">{card.category}</span></div></div><button onClick={() => handleDeleteDuplicate(card.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"><Trash2 className="w-5 h-5" /></button></div>))}</div>
+                            </div>
+                        ))
+                    }
+                </div>
+            )}
+        </div>
       </div>
     </div>
   );
