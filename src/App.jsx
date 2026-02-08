@@ -942,7 +942,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                         ))
                     }
                 </div>
-            )}
+            )} 
         </div>
       </div>
     </div>
