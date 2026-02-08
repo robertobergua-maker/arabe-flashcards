@@ -937,7 +937,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
             {activeTab === 'duplicates' && (
                 <div className="space-y-6">{duplicateGroups.length === 0 ? <div className="text-center text-slate-400 py-10 flex flex-col items-center"><CheckCircle className="w-12 h-12 mb-2 opacity-20"/><p>¡Limpio!</p></div> : duplicateGroups.map((group, idx) => ( <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"><div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center"><span className="font-bold text-slate-600 text-sm">Conflicto #{idx+1}</span><span className="font-arabic text-lg text-emerald-700 font-bold" dir="rtl">{group[0].arabic}</span></div><div className="divide-y divide-slate-100">{group.map(card => (<div key={card.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors"><div className="flex items-center gap-3"><span className="text-xs text-slate-400 font-mono w-10">#{card.id}</span><div className="flex flex-col"><span className="font-bold text-slate-800">{card.spanish}</span><span className="text-[10px] text-slate-500">{card.category}</span></div></div><button onClick={() => handleDeleteDuplicate(card.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"><Trash2 className="w-5 h-5" /></button></div>))}</div></div> ))}</div>
             )}
-        </div>
+        </div> 
       </div>
     </div>
   );
