@@ -7,7 +7,7 @@ import {
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
   Settings, AlertTriangle, ArrowRight, Check, Gamepad2, Trophy, Frown, PartyPopper,
-  Grid3x3, ArrowLeft, Zap, Timer, Music, PlayCircle, HelpCircle, Edit3, Clock, Activity
+  Grid3x3, BrainCircuit, ArrowLeft, Zap, Timer, Music, PlayCircle, HelpCircle, Edit3, Activity
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -38,6 +38,29 @@ const shuffleArray = (array) => {
   return newArray;
 };
 
+// MOTOR DE AUDIO MEJORADO
+const playSmartAudio = (text) => {
+    if (!text) return;
+    
+    // Cancelar cualquier audio anterior
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ar-SA';
+    utterance.rate = 0.85; // Un poco más lento para mayor claridad
+
+    // Intentar encontrar una voz de alta calidad (Google o Maged)
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.lang.includes('ar') && (v.name.includes('Google') || v.name.includes('Maged') || v.name.includes('Premium')));
+    
+    if (preferredVoice) {
+        utterance.voice = preferredVoice;
+    }
+
+    window.speechSynthesis.speak(utterance);
+};
+
+// Alfabeto básico para generar distractores
 const ARABIC_ALPHABET = [
   'ا', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'ه', 'و', 'ي'
 ];
@@ -65,6 +88,13 @@ export default function App() {
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isGamesHubOpen, setIsGamesHubOpen] = useState(false); 
+
+  // Precargar voces
+  useEffect(() => {
+    const loadVoices = () => { window.speechSynthesis.getVoices(); };
+    loadVoices();
+    window.speechSynthesis.onvoiceschanged = loadVoices;
+  }, []);
 
   useEffect(() => {
     fetchAllCards();
@@ -255,7 +285,7 @@ export default function App() {
                     className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors flex items-center justify-center shadow-lg"
                     title="Juegos de Práctica"
                 >
-                    <Gamepad2 className="w-5 h-5" />
+                    <PlayCircle className="w-6 h-6" />
                 </button>
 
                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
@@ -336,7 +366,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
           {/* Tarjeta Memory */}
           <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200">
             <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
-              <Grid3x3 className="w-7 h-7" />
+              <Grid className="w-7 h-7" />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3>
             <p className="text-sm text-slate-500">Ejercita tu mente. Encuentra las parejas ocultas.</p>
@@ -407,29 +437,7 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
     setSelectedOption(null);
     setIsCorrect(null);
     
-    setTimeout(() => {
-        try {
-            if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel();
-                const utterance = new SpeechSynthesisUtterance(correctCard.arabic || "");
-                utterance.lang = 'ar-SA';
-                window.speechSynthesis.speak(utterance);
-            }
-        } catch (e) {
-            console.error("Audio autoplay blocked", e);
-        }
-    }, 500);
-  };
-
-  const playAudio = (text) => {
-    try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text || "");
-        utterance.lang = 'ar-SA';
-        window.speechSynthesis.speak(utterance);
-    } catch (e) {
-        console.error("Audio error", e);
-    }
+    setTimeout(() => playSmartAudio(correctCard.arabic), 500);
   };
 
   const handleOptionClick = (option) => {
@@ -481,7 +489,7 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
              </div>
           ) : (
              <button 
-                onClick={() => playAudio(round.card.arabic)}
+                onClick={() => playSmartAudio(round.card.arabic)}
                 className="w-24 h-24 rounded-full bg-cyan-100 text-cyan-600 flex items-center justify-center hover:scale-110 hover:bg-cyan-200 transition-all shadow-lg border-4 border-white"
              >
                 <Volume2 className="w-12 h-12" />
@@ -818,7 +826,7 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
                                     style={{ transformStyle: 'preserve-3d', transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)' }}
                                 >
                                     <div className="absolute inset-0 backface-hidden bg-emerald-600 rounded-xl border-2 border-emerald-700 flex items-center justify-center shadow-md" style={{ backfaceVisibility: 'hidden' }}>
-                                        <Grid3x3 className="text-white/30 w-10 h-10" />
+                                        <Grid className="text-white/30 w-10 h-10" />
                                     </div>
                                     <div className="absolute inset-0 backface-hidden bg-white rounded-xl border-2 border-emerald-500 flex items-center justify-center p-2 text-center shadow-md" style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}>
                                         <span className={`font-bold text-slate-800 ${card.type === 'ar' ? 'font-arabic text-xl' : 'text-sm'}`} dir={card.type === 'ar' ? 'rtl' : 'ltr'}>
@@ -948,7 +956,7 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
                             <ArrowRight className="w-5 h-5 opacity-0 group-hover:opacity-100 transition"/>
                         </button>
                         <button onClick={() => startGame(10)} className="p-4 bg-green-100 text-green-700 rounded-xl font-bold border-2 border-green-200 hover:bg-green-200 flex items-center justify-between group">
-                            <span className="flex items-center gap-2"><Activity className="w-5 h-5"/> Zen (10s)</span>
+                            <span className="flex items-center gap-2"><Clock className="w-5 h-5"/> Zen (10s)</span>
                             <ArrowRight className="w-5 h-5 opacity-0 group-hover:opacity-100 transition"/>
                         </button>
                     </div>
@@ -1038,11 +1046,21 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
     if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); 
   };
 
+  const playSmartAudio = (text) => {
+    if (!text) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ar-SA';
+    utterance.rate = 0.85; 
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.lang.includes('ar') && (v.name.includes('Google') || v.name.includes('Maged')));
+    if (preferredVoice) utterance.voice = preferredVoice;
+    window.speechSynthesis.speak(utterance);
+  };
+
   const playAudio = (e) => {
     e.stopPropagation();
-    const utterance = new SpeechSynthesisUtterance(data?.arabic || "");
-    utterance.lang = 'ar-SA';
-    window.speechSynthesis.speak(utterance);
+    playSmartAudio(data?.arabic || "");
   };
 
   const spanishText = data?.spanish || "Sin texto";
