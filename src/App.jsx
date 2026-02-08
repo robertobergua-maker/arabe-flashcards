@@ -2,13 +2,17 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist'; 
-// IMPORTACIÓN SEGURA: Solo iconos básicos y universales
+// Si tu proyecto usa un archivo CSS global, asegúrate de que esté importado. 
+// Normalmente es './index.css' o './App.css'. Descomenta la línea que corresponda a tu proyecto:
+// import './index.css'; 
+// import './App.css';
+
 import { 
   Search, Volume2, BookOpen, X, CheckCircle, 
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
   Settings, AlertTriangle, ArrowRight, Check, ArrowLeft, 
-  PlayCircle, HelpCircle, Grid, Zap, Activity, Mic, Star, Layout
+  PlayCircle, HelpCircle, Grid, Zap, Activity, Mic, Layout, Star
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -144,7 +148,7 @@ export default function App() {
       const uniqueCards = Array.from(new Map(allData.map(item => [item.id, item])).values());
       setCards(uniqueCards);
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Error cargando tarjetas:", error.message);
     } finally {
       setLoading(false);
     }
@@ -275,7 +279,7 @@ export default function App() {
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-white/50" />
               <input 
                 type="text"
-                placeholder="Buscar (ej: arbol, kitab)..."
+                placeholder="Buscar..."
                 className="w-full pl-9 pr-4 py-2 bg-black/20 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-white/40 placeholder-white/50 text-sm text-white"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -341,8 +345,7 @@ export default function App() {
   );
 }
 
-// --- JUEGOS Y MODALES ---
-
+// --- HUB DE JUEGOS ---
 function GamesHub({ onClose, cards, showDiacritics }) {
   const [activeGame, setActiveGame] = useState(() => localStorage.getItem('current_game') || 'menu'); 
 
@@ -358,7 +361,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative">
         <div className="bg-slate-800 p-6 text-white flex justify-between items-center">
-          <div className="flex items-center gap-3"><span className="text-2xl">🎮</span><h2 className="font-bold text-2xl">Arcade</h2></div>
+          <div className="flex items-center gap-3"><PlayCircle className="w-8 h-8 text-yellow-400" /><h2 className="font-bold text-2xl">Arcade</h2></div>
           <button onClick={onClose} className="hover:bg-slate-700 p-2 rounded-full transition"><X className="w-6 h-6" /></button>
         </div>
 
@@ -403,6 +406,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
   );
 }
 
+// JUEGO 5: OÍDO FINO (LISTENING)
 function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
   const [round, setRound] = useState(null);
   const [score, setScore] = useState(0);
@@ -414,6 +418,7 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
 
   const startNewRound = () => {
     if (cards.length < 4) return;
+    
     const correctCard = cards[Math.floor(Math.random() * cards.length)];
     const targetType = getCardType(correctCard);
     let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType);
@@ -473,6 +478,7 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
   );
 }
 
+// JUEGO 4: EL ESCRIBA (LETTER GAP)
 function LetterGapGame({ onBack, onClose, cards, showDiacritics }) {
   const [round, setRound] = useState(null);
   const [score, setScore] = useState(0);
@@ -530,15 +536,10 @@ function LetterGapGame({ onBack, onClose, cards, showDiacritics }) {
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative">
-        <div className="bg-amber-600 p-4 text-white flex justify-between items-center">
-          <div className="flex items-center gap-2"><button onClick={onBack} className="hover:bg-amber-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button><h2 className="font-bold text-lg">El Escriba</h2></div><button onClick={onClose} className="hover:bg-amber-500 p-1 rounded"><X className="w-6 h-6" /></button>
-        </div>
-        <div className="flex justify-between px-6 py-3 bg-amber-50 border-b border-amber-100">
-          <div className="flex flex-col items-center"><span className="text-xs font-bold text-amber-400 uppercase">Racha</span><span className="text-xl font-black text-amber-700">{score}</span></div>
-          <div className="flex flex-col items-center"><span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Trophy className="w-3 h-3"/> Récord</span><span className="text-xl font-black text-slate-600">{highScore}</span></div>
-        </div>
+        <div className="bg-amber-600 p-4 text-white flex justify-between items-center"><div className="flex items-center gap-2"><button onClick={onBack} className="hover:bg-amber-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button><h2 className="font-bold text-lg">El Escriba</h2></div><button onClick={onClose} className="hover:bg-amber-500 p-1 rounded"><X className="w-6 h-6" /></button></div>
+        <div className="flex justify-between px-6 py-3 bg-amber-50 border-b border-amber-100"><div className="flex flex-col items-center"><span className="text-xs font-bold text-amber-400 uppercase">Racha</span><span className="text-xl font-black text-amber-700">{score}</span></div><div className="flex flex-col items-center"><span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Trophy className="w-3 h-3"/> Récord</span><span className="text-xl font-black text-slate-600">{highScore}</span></div></div>
         <div className="p-8 text-center bg-slate-50 flex flex-col items-center justify-center min-h-[200px]">
-          <span className="text-xs font-bold text-slate-400 uppercase mb-4 block">Completa: {round.card.spanish}</span>
+          <span className="text-xs font-bold text-slate-400 uppercase mb-4 block">Completa la palabra ({round.card.spanish})</span>
           <h3 className="text-4xl md:text-5xl font-black font-arabic text-slate-800 animate-fade-in-up leading-relaxed" dir="rtl">
             {selectedOption && isCorrect ? (showDiacritics ? round.card.arabic : removeArabicDiacritics(round.card.arabic)) : round.questionText}
           </h3>
@@ -559,6 +560,7 @@ function LetterGapGame({ onBack, onClose, cards, showDiacritics }) {
   );
 }
 
+// JUEGO 1: QUIZ
 function QuizGame({ onBack, onClose, cards, showDiacritics }) {
   const [currentRound, setCurrentRound] = useState(null);
   const [score, setScore] = useState(0);
@@ -621,6 +623,7 @@ function QuizGame({ onBack, onClose, cards, showDiacritics }) {
   );
 }
 
+// JUEGO 2: MEMORIA
 function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
   const [gameCards, setGameCards] = useState([]);
   const [flipped, setFlipped] = useState([]); 
@@ -700,6 +703,7 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
   );
 }
 
+// JUEGO 3: VERDADERO O FALSO
 function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
   const [round, setRound] = useState(null);
   const [score, setScore] = useState(0);
@@ -758,6 +762,12 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
     setGameOver(true);
   };
 
+  const restartGame = () => {
+    setScore(0);
+    setGameOver(false);
+    startNewRound();
+  };
+
   if (gameState === 'menu') {
       return (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -769,7 +779,7 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
                     <h3 className="text-xl font-bold text-slate-800 mb-6">Elige tu nivel</h3>
                     <div className="flex flex-col gap-3">
                         <button onClick={() => startGame(3)} className="p-4 bg-red-100 text-red-700 rounded-xl font-bold border-2 border-red-200 hover:bg-red-200 flex items-center justify-between group"><span className="flex items-center gap-2"><Zap className="w-5 h-5"/> Experto (3s)</span><ArrowRight className="w-5 h-5 opacity-0 group-hover:opacity-100 transition"/></button>
-                        <button onClick={() => startGame(5)} className="p-4 bg-orange-100 text-orange-700 rounded-xl font-bold border-2 border-orange-200 hover:bg-orange-200 flex items-center justify-between group"><span className="flex items-center gap-2"><Clock className="w-5 h-5"/> Normal (5s)</span><ArrowRight className="w-5 h-5 opacity-0 group-hover:opacity-100 transition"/></button>
+                        <button onClick={() => startGame(5)} className="p-4 bg-orange-100 text-orange-700 rounded-xl font-bold border-2 border-orange-200 hover:bg-orange-200 flex items-center justify-between group"><span className="flex items-center gap-2"><Timer className="w-5 h-5"/> Normal (5s)</span><ArrowRight className="w-5 h-5 opacity-0 group-hover:opacity-100 transition"/></button>
                         <button onClick={() => startGame(10)} className="p-4 bg-green-100 text-green-700 rounded-xl font-bold border-2 border-green-200 hover:bg-green-200 flex items-center justify-between group"><span className="flex items-center gap-2"><Activity className="w-5 h-5"/> Zen (10s)</span><ArrowRight className="w-5 h-5 opacity-0 group-hover:opacity-100 transition"/></button>
                     </div>
                 </div>
@@ -812,7 +822,7 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
   );
 }
 
-// COMPONENTES FLASHCARD Y MODALES FALTABAN AQUÍ
+// --- COMPONENTE FLASHCARD INDESTRUCTIBLE ---
 function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
   const [flipState, setFlipState] = useState(0);
   useEffect(() => { setFlipState(0); }, [frontLanguage]);
