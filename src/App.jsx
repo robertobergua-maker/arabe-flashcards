@@ -90,6 +90,7 @@ export default function App() {
         safetyCounter++;
       }
 
+      // Eliminar duplicados basándonos en ID para evitar errores de renderizado
       const uniqueCards = Array.from(new Map(allData.map(item => [item.id, item])).values());
       setCards(uniqueCards);
     } catch (error) {
@@ -197,8 +198,8 @@ export default function App() {
   const filteredCards = useMemo(() => {
     const normalizedTerm = normalizeForSearch(searchTerm);
     let result = cards.filter(card => {
-      const s = normalizeForSearch(card.spanish);
-      const a = normalizeForSearch(card.arabic);
+      const s = normalizeForSearch(card.spanish || "");
+      const a = normalizeForSearch(card.arabic || "");
       const matchesSearch = s.includes(normalizedTerm) || a.includes(normalizedTerm);
       let matchesCategory = false;
       if (selectedCategory === "Todos") {
@@ -511,6 +512,104 @@ function MemoryGame({ onBack, onClose, cards }) {
   );
 }
 
+// --- COMPONENTE FLASHCARD BLINDADO ---
+function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
+  const [flipState, setFlipState] = useState(0);
+  
+  // Reiniciar estado al cambiar idioma
+  useEffect(() => { setFlipState(0); }, [frontLanguage]);
+
+  const handleNextFace = () => { 
+    if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); 
+  };
+
+  const playAudio = (e) => {
+    e.stopPropagation();
+    const utterance = new SpeechSynthesisUtterance(data?.arabic || "");
+    utterance.lang = 'ar-SA';
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const spanishText = data?.spanish || "Sin texto";
+  const arabicText = data?.arabic || "Sin texto";
+  const phoneticText = data?.phonetic || "N/A";
+  const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText);
+  const tags = data?.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
+
+  // CÁLCULO DIRECTO DEL CONTENIDO A MOSTRAR
+  let content = null;
+
+  if (isAdmin) {
+    content = (
+      <>
+        <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{spanishText}</h3>
+        <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayArabic}</h3>
+        <p className="text-sm font-mono text-amber-700 italic opacity-80">{phoneticText}</p>
+      </>
+    );
+  } else if (flipState === 2) {
+    content = (
+      <>
+        <p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p>
+        <h3 className="text-lg font-mono text-amber-800 italic">{phoneticText}</h3>
+      </>
+    );
+  } else {
+    // Determinar idioma actual: Español o Árabe
+    const isFront = flipState === 0;
+    const currentLang = isFront ? frontLanguage : (frontLanguage === 'spanish' ? 'arabic' : 'spanish');
+
+    if (currentLang === 'spanish') {
+      content = (
+        <>
+          <p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p>
+          <h3 className="text-xl font-bold text-slate-800">{spanishText}</h3>
+        </>
+      );
+    } else {
+      content = (
+        <>
+          <p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p>
+          <h3 className="text-3xl font-arabic text-emerald-900 mb-4" dir="rtl">{displayArabic}</h3>
+          <button onClick={playAudio} className="p-2 bg-emerald-200 text-emerald-800 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button>
+        </>
+      );
+    }
+  }
+
+  // Estilos de fondo
+  let bgClass = "bg-white border-slate-200 text-slate-800";
+  if (!isAdmin) {
+    if (flipState === 0) bgClass = "bg-orange-50 border-orange-100 text-slate-800";
+    if (flipState === 1) bgClass = "bg-emerald-50 border-emerald-200 text-emerald-900";
+    if (flipState === 2) bgClass = "bg-amber-100 border-amber-200 text-amber-900";
+  }
+
+  return (
+    <div 
+      onClick={handleNextFace}
+      className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}
+    >
+      {isAdmin && (
+        <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
+          <button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
+        {content}
+      </div>
+
+      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">
+        {tags.map((tag, i) => (
+          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // --- MODAL DE MANTENIMIENTO BD ---
 function MaintenanceModal({ onClose, cards, refreshCards }) {
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
@@ -658,104 +757,6 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
                 </div>
             )}
         </div>
-      </div>
-    </div>
-  );
-}
-
-// --- COMPONENTE FLASHCARD REFACTORIZADO Y SEGURO ---
-function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onEdit }) {
-  const [flipState, setFlipState] = useState(0);
-  useEffect(() => { setFlipState(0); }, [frontLanguage]);
-  const handleNextFace = () => { if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); };
-
-  const playAudio = (e) => {
-    e.stopPropagation();
-    const utterance = new SpeechSynthesisUtterance(data.arabic || "");
-    utterance.lang = 'ar-SA';
-    window.speechSynthesis.speak(utterance);
-  };
-
-  const getCardStyle = () => {
-    if (isAdmin) return "bg-white border-slate-200 text-slate-800 cursor-default ring-2 ring-slate-100"; 
-    switch(flipState) {
-      case 0: return "bg-orange-50 border-orange-100 text-slate-800"; 
-      case 1: return "bg-emerald-50 border-emerald-200 text-emerald-900";
-      case 2: return "bg-amber-100 border-amber-200 text-amber-900";
-      default: return "bg-white";
-    }
-  };
-
-  const displayText = showDiacritics ? data.arabic : removeArabicDiacritics(data.arabic);
-  const tags = data.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
-
-  // Lógica de Renderizado Clara
-  const renderContent = () => {
-    // 1. Modo Admin: Siempre muestra todo
-    if (isAdmin) {
-        return (
-            <>
-                <h3 className="text-lg font-bold text-slate-800 line-clamp-2">{data.spanish}</h3>
-                <h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayText}</h3>
-                <p className="text-sm font-mono text-amber-700 italic opacity-80">{data.phonetic}</p>
-            </>
-        );
-    }
-
-    // 2. Modo Fonética (Cara 3)
-    if (flipState === 2) {
-        return (
-            <>
-                <p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p>
-                <h3 className="text-lg font-mono text-amber-800 italic">{data.phonetic}</h3>
-            </>
-        );
-    }
-
-    // 3. Determinar si mostramos Español o Árabe
-    // Si el usuario quiere ver Español primero (frontLanguage='spanish') y estamos en la cara 0 -> Español.
-    // Si el usuario quiere ver Árabe primero (frontLanguage='arabic') y estamos en la cara 1 -> Español (porque la cara 0 fue Árabe).
-    const showSpanish = (frontLanguage === 'spanish' && flipState === 0) || (frontLanguage === 'arabic' && flipState === 1);
-
-    if (showSpanish) {
-        return (
-            <>
-                <p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p>
-                <h3 className="text-xl font-bold">{data.spanish}</h3>
-            </>
-        );
-    } else {
-        // Mostrar Árabe
-        return (
-            <>
-                <p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p>
-                <h3 className="text-3xl font-arabic mb-4" dir="rtl">{displayText}</h3>
-                <button onClick={playAudio} className="p-2 bg-emerald-200 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button>
-            </>
-        );
-    }
-  };
-
-  return (
-    <div 
-      onClick={handleNextFace}
-      className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group ${getCardStyle()}`}
-    >
-      {isAdmin && (
-        <div className="absolute top-2 right-2 flex gap-2 z-10">
-          <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button>
-          <button onClick={(e) => { e.stopPropagation(); onDelete(); }} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button>
-        </div>
-      )}
-
-      <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">
-        {renderContent()}
-      </div>
-
-      <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">
-        {tags.map((tag, i) => (
-          <span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>
-        ))}
       </div>
     </div>
   );
