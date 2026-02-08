@@ -1,17 +1,23 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import OpenAI from 'openai';
-import * as pdfjsLib from 'pdfjs-dist'; 
-// IMPORTAMOS SOLO ICONOS SEGUROS QUE YA ESTABAN EN TU PROYECTO ORIGINAL
-import { 
-  Search, Volume2, BookOpen, X, CheckCircle, 
-  Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
-  Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
-  Settings, AlertTriangle, ArrowRight, Check, ArrowLeft
+// import OpenAI from 'openai'; // <-- QUÍTALO si no lo usas aún
+import * as pdfjsLib from 'pdfjs-dist';
+
+import {
+  Search, Volume2, BookOpen, X, CheckCircle,
+  Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save,
+  Wand2, Image as ImageIcon, FileText, Loader2,
+  Settings, AlertTriangle, ArrowRight, Check, ArrowLeft,
+
+  // ✅ FALTABAN y los usas en varios juegos
+  Trophy, Frown, Zap, Activity,
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
 
 // --- UTILIDADES ---
 
@@ -88,7 +94,13 @@ export default function App() {
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   
   // Estado persistente
-  const [frontLanguage, setFrontLanguage] = useState(() => localStorage.getItem('pref_lang') || "spanish");
+  const [frontLanguage, setFrontLanguage] = useState(() => {
+  try {
+    return localStorage.getItem('pref_lang') || 'spanish';
+  } catch {
+    return 'spanish';
+  }
+});
   const [showDiacritics, setShowDiacritics] = useState(() => safeGetStorage('pref_diacritics', true));
   const [isGamesHubOpen, setIsGamesHubOpen] = useState(() => safeGetStorage('games_open', false)); 
 
@@ -104,14 +116,20 @@ export default function App() {
   useEffect(() => { localStorage.setItem('pref_diacritics', JSON.stringify(showDiacritics)); }, [showDiacritics]);
   useEffect(() => { localStorage.setItem('games_open', JSON.stringify(isGamesHubOpen)); }, [isGamesHubOpen]);
 
-  useEffect(() => {
-    const loadVoices = () => { window.speechSynthesis.getVoices(); };
-    loadVoices();
-    if (window.speechSynthesis.onvoiceschanged !== undefined) {
-        window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-    fetchAllCards();
-  }, []);
+useEffect(() => {
+  const loadVoices = () => window.speechSynthesis.getVoices();
+
+  loadVoices();
+  const prev = window.speechSynthesis.onvoiceschanged;
+  window.speechSynthesis.onvoiceschanged = loadVoices;
+
+  fetchAllCards();
+
+  return () => {
+    // restaura lo anterior si existía
+    window.speechSynthesis.onvoiceschanged = prev || null;
+  };
+}, []);
 
   async function fetchAllCards() {
     try {
