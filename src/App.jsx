@@ -7,7 +7,7 @@ import {
   Type, Filter, Lock, Unlock, Plus, Trash2, Edit2, Save, 
   Wand2, Image as ImageIcon, FileText, Loader2, FileUp,
   Settings, AlertTriangle, ArrowRight, Check, Gamepad2, Trophy, Frown, PartyPopper,
-  Grid3x3, BrainCircuit, ArrowLeft, Zap, Timer, Puzzle
+  Grid3x3, BrainCircuit, ArrowLeft, Zap, Timer, Puzzle, Headphones
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -315,6 +315,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
   if (activeGame === 'memory') return <MemoryGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
   if (activeGame === 'truefalse') return <TrueFalseGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
   if (activeGame === 'lettergap') return <LetterGapGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
+  if (activeGame === 'listening') return <ListeningGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
 
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -361,7 +362,16 @@ function GamesHub({ onClose, cards, showDiacritics }) {
               <Puzzle className="w-7 h-7" />
             </div>
             <h3 className="text-xl font-bold text-slate-800 mb-2">El Escriba</h3>
-            <p className="text-sm text-slate-500">Completa la palabra. Elige la letra que falta para formar el término correcto.</p>
+            <p className="text-sm text-slate-500">Completa la palabra. Elige la letra que falta.</p>
+          </button>
+
+          {/* Tarjeta Listening (NUEVA) */}
+          <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl hover:scale-105 transition-all group text-left border border-slate-200 md:col-span-2">
+            <div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 group-hover:bg-cyan-600 group-hover:text-white transition-colors">
+              <Headphones className="w-7 h-7" />
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3>
+            <p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado. ¡Entrena tu oído!</p>
           </button>
         </div>
         
@@ -373,7 +383,130 @@ function GamesHub({ onClose, cards, showDiacritics }) {
   );
 }
 
-// JUEGO 4: EL ESCRIBA (LETTER GAP) - NUEVO
+// JUEGO 5: OÍDO FINO (LISTENING) - NUEVO
+function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
+  const [round, setRound] = useState(null);
+  const [score, setScore] = useState(0);
+  const [highScore, setHighScore] = useState(parseInt(localStorage.getItem('listen_highscore') || '0'));
+  const [selectedOption, setSelectedOption] = useState(null);
+  const [isCorrect, setIsCorrect] = useState(null);
+
+  useEffect(() => { startNewRound(); }, []);
+
+  const startNewRound = () => {
+    if (cards.length < 4) return;
+    
+    // 1. Elegir carta correcta
+    const correctCard = cards[Math.floor(Math.random() * cards.length)];
+    const targetType = getCardType(correctCard);
+
+    // 2. Elegir distractores del mismo tipo
+    let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType);
+    if (candidates.length < 3) candidates = cards.filter(c => c.id !== correctCard.id);
+    const distractors = shuffleArray(candidates).slice(0, 3);
+
+    setRound({
+        card: correctCard,
+        options: shuffleArray([correctCard, ...distractors])
+    });
+    setSelectedOption(null);
+    setIsCorrect(null);
+    
+    // Play Audio Automatically
+    setTimeout(() => playAudio(correctCard.arabic), 500);
+  };
+
+  const playAudio = (text) => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'ar-SA';
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handleOptionClick = (option) => {
+    if (selectedOption) return;
+    setSelectedOption(option);
+    
+    const correct = option.id === round.card.id;
+    setIsCorrect(correct);
+
+    if (correct) {
+      const newScore = score + 1;
+      setScore(newScore);
+      if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('listen_highscore', newScore.toString()); }
+      setTimeout(startNewRound, 1500);
+    } else {
+      setScore(0);
+      setTimeout(startNewRound, 2500);
+    }
+  };
+
+  if (!round) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative">
+        <div className="bg-cyan-600 p-4 text-white flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <button onClick={onBack} className="hover:bg-cyan-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button>
+            <h2 className="font-bold text-lg">Oído Fino</h2>
+          </div>
+          <button onClick={onClose} className="hover:bg-cyan-500 p-1 rounded"><X className="w-6 h-6" /></button>
+        </div>
+        
+        {/* Puntuación */}
+        <div className="flex justify-between px-6 py-3 bg-cyan-50 border-b border-cyan-100">
+          <div className="flex flex-col items-center"><span className="text-xs font-bold text-cyan-400 uppercase">Racha</span><span className="text-xl font-black text-cyan-700">{score}</span></div>
+          <div className="flex flex-col items-center"><span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Trophy className="w-3 h-3"/> Récord</span><span className="text-xl font-black text-slate-600">{highScore}</span></div>
+        </div>
+
+        {/* Zona de Audio */}
+        <div className="p-8 text-center bg-slate-50 flex flex-col items-center justify-center min-h-[180px]">
+          {selectedOption ? (
+             <div className="animate-fade-in-up">
+                 <span className="text-xs font-bold text-slate-400 uppercase mb-2 block">Es...</span>
+                 <h3 className="text-3xl font-black font-arabic text-slate-800 mb-2" dir="rtl">
+                    {showDiacritics ? round.card.arabic : removeArabicDiacritics(round.card.arabic)}
+                 </h3>
+                 <p className="text-sm text-slate-500 italic">{round.card.phonetic}</p>
+             </div>
+          ) : (
+             <button 
+                onClick={() => playAudio(round.card.arabic)}
+                className="w-24 h-24 rounded-full bg-cyan-100 text-cyan-600 flex items-center justify-center hover:scale-110 hover:bg-cyan-200 transition-all shadow-lg border-4 border-white"
+             >
+                <Volume2 className="w-12 h-12" />
+             </button>
+          )}
+        </div>
+
+        {/* Opciones */}
+        <div className="p-6 grid grid-cols-1 gap-3 bg-white">
+          {round.options.map((option) => {
+            let btnClass = "p-4 rounded-xl border-2 text-lg text-center transition-all duration-200 shadow-sm font-bold ";
+            if (selectedOption) {
+              if (option.id === round.card.id) btnClass += "bg-green-100 border-green-500 text-green-800 scale-105";
+              else if (option.id === selectedOption.id && !isCorrect) btnClass += "bg-red-100 border-red-500 text-red-800 opacity-60";
+              else btnClass += "bg-slate-50 border-slate-100 text-slate-400 opacity-40";
+            } else btnClass += "bg-white border-slate-200 text-slate-700 hover:border-cyan-400 hover:bg-cyan-50 hover:shadow-md cursor-pointer active:scale-95";
+            
+            return (
+                <button key={option.id} disabled={!!selectedOption} onClick={() => handleOptionClick(option)} className={btnClass}>
+                    {option.spanish}
+                </button>
+            );
+          })}
+        </div>
+
+        <div className="h-12 flex items-center justify-center bg-slate-100 border-t border-slate-200">
+          {selectedOption && (isCorrect ? <span className="text-green-600 font-bold flex items-center gap-2 animate-bounce"><PartyPopper className="w-5 h-5"/> ¡Correcto!</span> : <span className="text-red-500 font-bold flex items-center gap-2 animate-shake"><Frown className="w-5 h-5"/> ¡Ooops!</span>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// JUEGO 4: EL ESCRIBA (LETTER GAP)
 function LetterGapGame({ onBack, onClose, cards, showDiacritics }) {
   const [round, setRound] = useState(null);
   const [score, setScore] = useState(0);
@@ -386,57 +519,35 @@ function LetterGapGame({ onBack, onClose, cards, showDiacritics }) {
   const startNewRound = () => {
     if (cards.length < 4) return;
     
-    // 1. Elegir palabra (preferiblemente que no sea frase larga para que se vea bien)
     let candidate = null;
-    let cleanText = "";
-    
-    // Intenta encontrar una palabra válida
     for(let i=0; i<20; i++) {
         const randomCard = cards[Math.floor(Math.random() * cards.length)];
         const rawArabic = randomCard.arabic;
-        // Quitamos diacríticos para procesar el "hueco" de forma lógica
         const clean = removeArabicDiacritics(rawArabic);
-        // Debe tener al menos 2 letras
         if (clean.length > 1 && getCardType(randomCard) === 'word') {
             candidate = randomCard;
-            cleanText = clean;
             break;
         }
     }
-    
-    // Fallback si no encuentra
     if (!candidate) candidate = cards[Math.floor(Math.random() * cards.length)];
 
-    // 2. Elegir letra a ocultar (que sea del alfabeto árabe estándar)
-    // Convertimos a array para manejar caracteres correctamente
     const originalText = showDiacritics ? candidate.arabic : removeArabicDiacritics(candidate.arabic);
     const textArray = Array.from(originalText);
-    
-    // Buscamos índices válidos (letras árabes)
     const validIndices = textArray.map((char, index) => ARABIC_ALPHABET.includes(char) || ARABIC_ALPHABET.some(l => removeArabicDiacritics(char) === l) ? index : -1).filter(i => i !== -1);
     
-    if (validIndices.length === 0) {
-        // Si falló (palabra rara), reintentar
-        setTimeout(startNewRound, 100);
-        return;
-    }
+    if (validIndices.length === 0) { setTimeout(startNewRound, 100); return; }
 
     const indexToHide = validIndices[Math.floor(Math.random() * validIndices.length)];
-    const correctLetter = textArray[indexToHide]; // La letra original (puede tener diacrítico si está activado)
+    const correctLetter = textArray[indexToHide]; 
     
-    // 3. Generar opciones
-    // La correcta
-    // 3 Distractores (letras del alfabeto al azar)
     let distractors = [];
     while(distractors.length < 3) {
         const randomLetter = ARABIC_ALPHABET[Math.floor(Math.random() * ARABIC_ALPHABET.length)];
-        // Comparamos sin diacríticos para asegurar que no sea la misma letra
         if (removeArabicDiacritics(randomLetter) !== removeArabicDiacritics(correctLetter)) {
             distractors.push(randomLetter);
         }
     }
 
-    // 4. Crear texto con hueco
     const maskedTextArray = [...textArray];
     maskedTextArray[indexToHide] = "___"; 
     const questionText = maskedTextArray.join("");
@@ -482,26 +593,22 @@ function LetterGapGame({ onBack, onClose, cards, showDiacritics }) {
           <button onClick={onClose} className="hover:bg-amber-500 p-1 rounded"><X className="w-6 h-6" /></button>
         </div>
         
-        {/* Puntuación */}
         <div className="flex justify-between px-6 py-3 bg-amber-50 border-b border-amber-100">
           <div className="flex flex-col items-center"><span className="text-xs font-bold text-amber-400 uppercase">Racha</span><span className="text-xl font-black text-amber-700">{score}</span></div>
           <div className="flex flex-col items-center"><span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1"><Trophy className="w-3 h-3"/> Récord</span><span className="text-xl font-black text-slate-600">{highScore}</span></div>
         </div>
 
-        {/* Zona de Pregunta */}
         <div className="p-8 text-center bg-slate-50 flex flex-col items-center justify-center min-h-[200px]">
           <span className="text-xs font-bold text-slate-400 uppercase mb-4 block">Completa la palabra ({round.card.spanish})</span>
           
-          {/* Palabra con Hueco - Se muestra grande */}
           <h3 className="text-4xl md:text-5xl font-black font-arabic text-slate-800 animate-fade-in-up leading-relaxed" dir="rtl">
             {selectedOption && isCorrect 
-                ? (showDiacritics ? round.card.arabic : removeArabicDiacritics(round.card.arabic)) // Si acierta, muestra palabra completa
-                : round.questionText // Si no, muestra huecos
+                ? (showDiacritics ? round.card.arabic : removeArabicDiacritics(round.card.arabic)) 
+                : round.questionText 
             }
           </h3>
         </div>
 
-        {/* Opciones */}
         <div className="p-6 grid grid-cols-4 gap-3 bg-white">
           {round.options.map((option, idx) => {
             let btnClass = "aspect-square rounded-xl border-2 text-2xl font-arabic flex items-center justify-center transition-all duration-200 shadow-sm ";
@@ -594,7 +701,6 @@ function QuizGame({ onBack, onClose, cards, showDiacritics }) {
               else btnClass += "bg-slate-50 border-slate-100 text-slate-400 opacity-40";
             } else btnClass += "bg-white border-slate-200 text-slate-700 hover:border-indigo-400 hover:bg-indigo-50 hover:shadow-md cursor-pointer active:scale-95";
             
-            // APLICAR SHOW DIACRITICS
             const textToShow = showDiacritics ? option.arabic : removeArabicDiacritics(option.arabic);
 
             return <button key={option.id} disabled={!!selectedOption} onClick={() => handleOptionClick(option)} className={btnClass} dir="rtl">{textToShow}</button>;
@@ -621,7 +727,6 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
   }, []);
 
   const startNewGame = () => {
-    // 1. Decidir tipo de juego al azar
     const gameType = Math.random() > 0.5 ? 'word' : 'phrase';
     let pool = cards.filter(c => getCardType(c) === gameType);
     if (pool.length < 6) pool = cards;
@@ -631,7 +736,6 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
     const deck = [];
     selectedPairs.forEach(pair => {
       deck.push({ id: pair.id, content: pair.spanish, type: 'es', pairId: pair.id });
-      // Guardamos el contenido Árabe crudo, luego en el render decidimos si mostrar diacríticos
       deck.push({ id: pair.id, content: pair.arabic, type: 'ar', pairId: pair.id });
     });
     setGameCards(shuffleArray(deck));
@@ -690,7 +794,6 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
                 <div className="grid grid-cols-3 md:grid-cols-4 gap-3 h-full content-center">
                     {gameCards.map((card, index) => {
                         const isFlipped = flipped.includes(index) || matched.includes(card.pairId);
-                        // APLICAR SHOW DIACRITICS
                         const textToShow = card.type === 'ar' 
                             ? (showDiacritics ? card.content : removeArabicDiacritics(card.content))
                             : card.content;
@@ -801,13 +904,11 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
 
   if (!round) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
 
-  // APLICAR SHOW DIACRITICS
   const arabicDisplay = showDiacritics ? round.arabic : removeArabicDiacritics(round.arabic);
 
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col relative h-[500px]">
-        {/* Header */}
         <div className="bg-rose-600 p-4 text-white flex justify-between items-center shrink-0">
           <div className="flex items-center gap-2">
             <button onClick={onBack} className="hover:bg-rose-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button>
@@ -828,7 +929,6 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
             </div>
         ) : (
             <div className="flex-1 flex flex-col relative">
-                {/* Timer Bar */}
                 <div className="h-2 bg-slate-200 w-full">
                     <div 
                         className={`h-full transition-all duration-100 ease-linear ${timer < 100 ? 'bg-red-500' : 'bg-green-500'}`} 
@@ -853,34 +953,16 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
                     </div>
                 </div>
 
-                {/* Botones Acción */}
                 <div className="p-4 grid grid-cols-2 gap-4 bg-slate-50 border-t border-slate-200">
-                    <button 
-                        onClick={() => handleChoice(false)} 
-                        className="py-4 rounded-xl bg-red-100 text-red-700 font-bold border-2 border-red-200 hover:bg-red-200 hover:border-red-300 transition flex flex-col items-center gap-1"
-                    >
-                        <X className="w-6 h-6" />
-                        NO
-                    </button>
-                    <button 
-                        onClick={() => handleChoice(true)} 
-                        className="py-4 rounded-xl bg-green-100 text-green-700 font-bold border-2 border-green-200 hover:bg-green-200 hover:border-green-300 transition flex flex-col items-center gap-1"
-                    >
-                        <Check className="w-6 h-6" />
-                        SÍ
-                    </button>
+                    <button onClick={() => handleChoice(false)} className="py-4 rounded-xl bg-red-100 text-red-700 font-bold border-2 border-red-200 hover:bg-red-200 hover:border-red-300 transition flex flex-col items-center gap-1"><X className="w-6 h-6" /> NO</button>
+                    <button onClick={() => handleChoice(true)} className="py-4 rounded-xl bg-green-100 text-green-700 font-bold border-2 border-green-200 hover:bg-green-200 hover:border-green-300 transition flex flex-col items-center gap-1"><Check className="w-6 h-6" /> SÍ</button>
                 </div>
 
-                {/* Feedback Overlay */}
                 {gameState === 'correct' && (
-                    <div className="absolute inset-0 bg-green-500/90 flex items-center justify-center z-10 animate-fade-in">
-                        <CheckCircle className="w-20 h-20 text-white animate-bounce" />
-                    </div>
+                    <div className="absolute inset-0 bg-green-500/90 flex items-center justify-center z-10 animate-fade-in"><CheckCircle className="w-20 h-20 text-white animate-bounce" /></div>
                 )}
                 {gameState === 'incorrect' && (
-                    <div className="absolute inset-0 bg-red-500/90 flex items-center justify-center z-10 animate-fade-in">
-                        <X className="w-20 h-20 text-white animate-shake" />
-                    </div>
+                    <div className="absolute inset-0 bg-red-500/90 flex items-center justify-center z-10 animate-fade-in"><X className="w-20 h-20 text-white animate-shake" /></div>
                 )}
             </div>
         )}
