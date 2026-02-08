@@ -1,3 +1,4 @@
+import Flashcard from "./components/Flashcard";
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 // import OpenAI from 'openai'; // <-- QUÍTALO si no lo usas aún
