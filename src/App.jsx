@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist'; 
-// IMPORTACIÓN SEGURA: Solo iconos universales para evitar errores de versión
+// IMPORTACIÓN SEGURA DE ICONOS
 import { 
   Search, Volume2, BookOpen, X, Check, ArrowLeft, 
   Play, Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
-  Image as ImageIcon, Star, Loader, Trophy, Frown, Grid, Activity, Mic, FileText
+  Image as ImageIcon, MoreHorizontal, Menu, Wand2, Loader,
+  Trophy, Frown, CheckCircle, HelpCircle, Grid, Activity, Mic, 
+  FileText, Upload, Camera, StopCircle, RefreshCw
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -152,10 +155,22 @@ export default function App() {
 
   const handleBulkImport = async (newCards) => {
     try {
-      const { data, error } = await supabase.from('flashcards').insert(newCards).select();
+      const cleanCards = newCards.map(c => ({
+        category: c.category || 'Importado',
+        spanish: c.spanish,
+        arabic: c.arabic,
+        phonetic: c.phonetic
+      }));
+      const { data, error } = await supabase.from('flashcards').insert(cleanCards).select();
       if (error) throw error;
-      if (data) { setCards(prev => [...data, ...prev]); alert(`¡${data.length} importadas!`); setIsSmartImportOpen(false); }
-    } catch (error) { alert("Error: " + error.message); }
+      if (data) {
+        setCards(prev => [...data, ...prev]);
+        alert(`¡${data.length} tarjetas importadas!`);
+        setIsSmartImportOpen(false);
+      }
+    } catch (error) {
+      alert("Error: " + error.message);
+    }
   };
 
   const handleDeleteCard = async (id) => {
@@ -223,7 +238,7 @@ export default function App() {
             {isAdminMode && (
               <div className="mb-6 flex flex-wrap justify-center gap-4 animate-fade-in-up">
                 <button onClick={openNewCardModal} className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-full shadow-lg font-bold"><Plus className="w-5 h-5" /> Añadir</button>
-                <button onClick={() => setIsSmartImportOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg font-bold"><Star className="w-5 h-5" /> Importar</button>
+                <button onClick={() => setIsSmartImportOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg font-bold"><Wand2 className="w-5 h-5" /> Importar IA</button>
                 <button onClick={() => setIsMaintenanceOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-full shadow-lg font-bold"><Settings className="w-5 h-5" /> Mantenimiento</button>
               </div>
             )}
@@ -269,7 +284,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
           <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 text-2xl">🧠</div><h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3><p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción.</p></button>
           <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 text-2xl">🎴</div><h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3><p className="text-sm text-slate-500">Encuentra las parejas.</p></button>
           <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4 text-2xl">⚡</div><h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3><p className="text-sm text-slate-500">Verdadero o Falso. Tienes 3, 5 o 10 segundos.</p></button>
-          <button onClick={() => setActiveGame('lettergap')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4 text-2xl">📝</div><h3 className="text-xl font-bold text-slate-800 mb-2">El Escriba</h3><p className="text-sm text-slate-500">Completa la palabra. Elige la letra que falta.</p></button>
+          <button onClick={() => setActiveGame('lettergap')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4 text-2xl">📝</div><h3 className="text-xl font-bold text-slate-800 mb-2">El Escriba</h3><p className="text-sm text-slate-500">Completa la palabra.</p></button>
           <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 md:col-span-2"><div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 text-2xl">🎧</div><h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3><p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado.</p></button>
         </div>
       </div>
@@ -404,7 +419,7 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col h-[90vh] md:h-auto relative">
-        <div className="bg-emerald-600 p-4 text-white flex justify-between items-center"><div className="flex items-center gap-2"><button onClick={onBack}><ArrowLeft className="w-5 h-5"/></button><h2 className="font-bold">Memoria</h2></div><button onClick={onClose}><X className="w-6 h-6"/></button></div>
+        <div className="bg-emerald-600 p-4 text-white flex justify-between items-center"><div className="flex items-center gap-2"><button onClick={onBack} className="hover:bg-emerald-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button><h2 className="font-bold">Memoria</h2></div><button onClick={onClose} className="hover:bg-emerald-500 p-1 rounded"><X className="w-6 h-6"/></button></div>
         <div className="bg-emerald-50 p-2 flex justify-between items-center text-sm font-bold text-emerald-800 shrink-0"><span>Movimientos: {moves}</span><span>Parejas: {matched.length} / 6</span></div>
         <div className="p-4 bg-slate-100 flex-1 overflow-y-auto">{matched.length === 6 ? <div className="text-center py-20"><h3 className="text-3xl font-bold text-slate-800">¡Ganaste!</h3></div> : 
           <div className="grid grid-cols-3 md:grid-cols-4 gap-3">{gameCards.map((c, i) => { 
@@ -473,26 +488,198 @@ function CardFormModal({ card, categories, onSave, onClose }) {
   );
 }
 
+// SMART IMPORT MODAL MEJORADO (CON TABS PARA TEXTO, ARCHIVO Y CÁMARA)
 function SmartImportModal({ onClose, onImport }) {
+  const [activeTab, setActiveTab] = useState('text'); // text, file, camera
   const [text, setText] = useState("");
-  const process = () => {
-      try {
-          const lines = text.split('\n').filter(l=>l.trim());
-          const newCards = lines.map(line => {
-              const parts = line.split('|');
-              return { category: 'Importado', spanish: parts[0]?.trim(), arabic: parts[1]?.trim(), phonetic: parts[2]?.trim() || '' };
-          });
-          onImport(newCards);
-      } catch(e) { alert("Error formato"); }
+  const [file, setFile] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
+  const videoRef = useRef(null);
+  const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
+
+  // Limpiar cámara al cerrar
+  useEffect(() => {
+    return () => {
+        if (cameraStream) cameraStream.getTracks().forEach(track => track.stop());
+    };
+  }, [cameraStream]);
+
+  const startCamera = async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setCameraStream(stream);
+        if (videoRef.current) videoRef.current.srcObject = stream;
+    } catch (err) {
+        alert("No se pudo acceder a la cámara");
+    }
   };
+
+  const capturePhoto = () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth;
+    canvas.height = videoRef.current.videoHeight;
+    canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+    const imageSrc = canvas.toDataURL('image/jpeg');
+    processImage(imageSrc);
+  };
+
+  const handleFileChange = async (e) => {
+    const selected = e.target.files[0];
+    if (!selected) return;
+    
+    if (selected.type === 'application/pdf') {
+        setIsProcessing(true);
+        try {
+            const arrayBuffer = await selected.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let fullText = "";
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const textContent = await page.getTextContent();
+                fullText += textContent.items.map(item => item.str).join(" ") + "\n";
+            }
+            setText(fullText);
+            setActiveTab('text'); // Switch to text tab to review
+        } catch (err) {
+            alert("Error leyendo PDF");
+        } finally {
+            setIsProcessing(false);
+        }
+    } else if (selected.type.startsWith('image/')) {
+        // Convert to base64 and process
+        const reader = new FileReader();
+        reader.onloadend = () => processImage(reader.result);
+        reader.readAsDataURL(selected);
+    }
+  };
+
+  const processImage = async (base64Image) => {
+      if (!apiKey) {
+          alert("Se necesita API Key de OpenAI para procesar imágenes");
+          return;
+      }
+      setIsProcessing(true);
+      try {
+        const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "text", text: "Extract flashcards from this image. Return strictly valid JSON array: [{category, spanish, arabic, phonetic}]. Detect the Arabic text and translate." },
+                        { type: "image_url", image_url: { url: base64Image } }
+                    ],
+                },
+            ],
+        });
+        const content = response.choices[0].message.content;
+        const jsonMatch = content.match(/\[.*\]/s);
+        if (jsonMatch) {
+            const cards = JSON.parse(jsonMatch[0]);
+            onImport(cards);
+        } else {
+            alert("No se encontraron tarjetas claras");
+        }
+      } catch (err) {
+          alert("Error procesando imagen: " + err.message);
+      } finally {
+          setIsProcessing(false);
+      }
+  };
+
+  const processText = async () => {
+      if (!text.trim()) return;
+      
+      // Fallback simple si no hay API Key
+      if (!apiKey) {
+          try {
+            const lines = text.split('\n').filter(l=>l.trim());
+            const newCards = lines.map(line => {
+                const parts = line.split('|');
+                return { category: 'Importado', spanish: parts[0]?.trim(), arabic: parts[1]?.trim(), phonetic: parts[2]?.trim() || '' };
+            });
+            onImport(newCards);
+          } catch(e) { alert("Error formato manual (Usa: Español | Árabe)"); }
+          return;
+      }
+
+      // Procesamiento Inteligente con API
+      setIsProcessing(true);
+      try {
+        const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
+        const response = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: `Extract flashcards from this text. Return strictly valid JSON array: [{category, spanish, arabic, phonetic}]. TEXT: ${text}` }],
+        });
+        const content = response.choices[0].message.content;
+        const jsonMatch = content.match(/\[.*\]/s);
+        if (jsonMatch) {
+            const cards = JSON.parse(jsonMatch[0]);
+            onImport(cards);
+        } else {
+            alert("No se pudo estructurar");
+        }
+      } catch (err) {
+          alert("Error API: " + err.message);
+      } finally {
+          setIsProcessing(false);
+      }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden">
-        <div className="bg-purple-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">Importar Rápido</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div>
-        <div className="p-6">
-            <p className="text-sm text-slate-500 mb-2">Pega texto: Español | Árabe | Fonética</p>
-            <textarea className="w-full h-40 p-2 border rounded text-xs font-mono" value={text} onChange={e=>setText(e.target.value)} placeholder="Gato | قطة | qitta"></textarea>
-            <button onClick={process} className="w-full mt-4 bg-purple-600 text-white py-2 rounded-lg font-bold">Procesar</button>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="bg-purple-600 p-4 text-white flex justify-between items-center shrink-0"><h2 className="font-bold">Importar Inteligente</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div>
+        
+        {/* TABS */}
+        <div className="flex border-b border-slate-200">
+            <button onClick={() => setActiveTab('text')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'text' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-slate-500'}`}>Texto</button>
+            <button onClick={() => setActiveTab('file')} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'file' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-slate-500'}`}>Archivo</button>
+            <button onClick={() => { setActiveTab('camera'); startCamera(); }} className={`flex-1 py-3 text-sm font-bold ${activeTab === 'camera' ? 'text-purple-600 border-b-2 border-purple-600' : 'text-slate-500'}`}>Cámara</button>
+        </div>
+
+        <div className="p-6 flex-1 overflow-y-auto">
+            {/* API Key Input si es necesario */}
+            <div className="mb-4">
+                <input type="password" placeholder="OpenAI API Key (Opcional para texto, Requerido para img)" className="w-full p-2 border rounded text-xs bg-slate-50" value={apiKey} onChange={e => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }} />
+            </div>
+
+            {activeTab === 'text' && (
+                <>
+                    <p className="text-sm text-slate-500 mb-2">Pega texto o usa el formato: Español | Árabe</p>
+                    <textarea className="w-full h-40 p-2 border rounded text-xs font-mono" value={text} onChange={e=>setText(e.target.value)} placeholder="Ej: Gato | قطة | qitta"></textarea>
+                    <button onClick={processText} disabled={isProcessing} className="w-full mt-4 bg-purple-600 text-white py-2 rounded-lg font-bold flex justify-center items-center gap-2">
+                        {isProcessing ? <Loader className="animate-spin w-4 h-4"/> : "Procesar"}
+                    </button>
+                </>
+            )}
+
+            {activeTab === 'file' && (
+                <div className="flex flex-col items-center justify-center h-40 border-2 border-dashed border-slate-300 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors relative">
+                    <input type="file" accept=".pdf,image/*" onChange={handleFileChange} className="absolute inset-0 opacity-0 cursor-pointer" />
+                    {isProcessing ? <Loader className="w-8 h-8 text-purple-600 animate-spin"/> : (
+                        <>
+                            <Upload className="w-8 h-8 text-slate-400 mb-2"/>
+                            <p className="text-sm text-slate-500 font-bold">Subir PDF o Imagen</p>
+                            <p className="text-xs text-slate-400">Clic o arrastra aquí</p>
+                        </>
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'camera' && (
+                <div className="flex flex-col items-center">
+                    <div className="w-full aspect-video bg-black rounded-lg overflow-hidden mb-4 relative">
+                        <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
+                    </div>
+                    <button onClick={capturePhoto} disabled={isProcessing} className="bg-purple-600 text-white p-4 rounded-full shadow-lg hover:bg-purple-700 disabled:opacity-50">
+                        {isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <Camera className="w-6 h-6"/>}
+                    </button>
+                </div>
+            )}
         </div>
       </div>
     </div>
@@ -505,10 +692,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
         <div className="bg-blue-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">Mantenimiento</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div>
-        <div className="p-6 text-center">
-            <Settings className="w-12 h-12 text-slate-300 mx-auto mb-4"/>
-            <p className="text-slate-500">Funciones avanzadas desactivadas en modo seguro.</p>
-        </div>
+        <div className="p-6 text-center"><Settings className="w-12 h-12 text-slate-300 mx-auto mb-4"/><p className="text-slate-500">Funciones avanzadas desactivadas en modo seguro.</p></div>
       </div>
     </div>
   );
