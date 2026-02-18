@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
+import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist'; 
-// IMPORTACIÓN SEGURA DE ICONOS (Solo los básicos que no fallan)
+// IMPORTACIÓN DE ICONOS (Añadidos Gamepad2 y Baseline)
 import { 
   Search, Volume2, BookOpen, X, Check, ArrowLeft, 
-  Play, Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
+  Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
   Image as ImageIcon, Wand2, Loader,
-  Trophy, Frown, CheckCircle, HelpCircle, Grid, Activity, Mic, FileText
+  Trophy, Frown, CheckCircle, HelpCircle, Grid, Activity, Mic, 
+  FileText, Camera, Upload, Gamepad2, Baseline
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -43,6 +45,8 @@ const safeGetStorage = (key, fallback) => {
   }
 };
 
+const ARABIC_ALPHABET = ['ا', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'ه', 'و', 'ي'];
+
 const getCardType = (card) => {
     if (!card) return 'word';
     if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase';
@@ -51,14 +55,13 @@ const getCardType = (card) => {
     return wordCount > 2 ? 'phrase' : 'word';
 };
 
-// Motor de Audio
 const playSmartAudio = (text) => {
     if (!text) return;
     try {
         window.speechSynthesis.cancel();
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = 'ar-SA';
-        utterance.rate = 0.75; 
+        utterance.rate = 0.7; 
         const voices = window.speechSynthesis.getVoices();
         const preferredVoice = voices.find(v => v.lang.includes('ar'));
         if (preferredVoice) utterance.voice = preferredVoice;
@@ -75,9 +78,11 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   
+  // Preferencias
   const [frontLanguage, setFrontLanguage] = useState(() => localStorage.getItem('pref_lang') || "spanish");
   const [showDiacritics, setShowDiacritics] = useState(() => safeGetStorage('pref_diacritics', true));
   
+  // Modales y Estados
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [editingCard, setEditingCard] = useState(null); 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -85,7 +90,7 @@ export default function App() {
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isGamesHubOpen, setIsGamesHubOpen] = useState(() => safeGetStorage('games_open', false)); 
 
-  // Auto-reparación visual (Tailwind)
+  // --- AUTO-REPARACIÓN DE ESTILOS ---
   useEffect(() => {
     if (!document.getElementById('tailwind-cdn')) {
       const script = document.createElement('script');
@@ -205,11 +210,15 @@ export default function App() {
                 </select>
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos"><Play className="w-6 h-6" /></button>
+                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos">
+                    <Gamepad2 className="w-6 h-6" />
+                </button>
                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
                     <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
                     <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
-                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>ABC</button>
+                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>
+                        <Baseline className="w-3.5 h-3.5" />
+                    </button>
                 </div>
                 <button onClick={handleAdminToggle} className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500' : 'bg-black/20 text-white/70'}`}>{isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}</button>
             </div>
@@ -260,17 +269,15 @@ function GamesHub({ onClose, cards, showDiacritics }) {
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col relative">
         <div className="bg-slate-800 p-6 text-white flex justify-between items-center">
-          <div className="flex items-center gap-3"><Play className="w-8 h-8 text-yellow-400" /><h2 className="font-bold text-2xl">Arcade</h2></div>
+          <div className="flex items-center gap-3"><Gamepad2 className="w-8 h-8 text-yellow-400" /><h2 className="font-bold text-2xl">Arcade</h2></div>
           <button onClick={onClose} className="hover:bg-slate-700 p-2 rounded-full transition"><X className="w-6 h-6" /></button>
         </div>
-
         <div className="p-8 bg-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto max-h-[70vh]">
-          <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 text-2xl">🧠</div><h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3><p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción.</p></button>
-          <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 text-2xl">🎴</div><h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3><p className="text-sm text-slate-500">Encuentra las parejas.</p></button>
-          <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4 text-2xl">⚡</div><h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3><p className="text-sm text-slate-500">Verdadero o Falso.</p></button>
-          {/* NUEVO JUEGO CONECTA */}
-          <button onClick={() => setActiveGame('connect')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4 text-2xl">🔗</div><h3 className="text-xl font-bold text-slate-800 mb-2">Conecta</h3><p className="text-sm text-slate-500">Une cada palabra con su significado.</p></button>
-          <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 md:col-span-2"><div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 text-2xl">🎧</div><h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3><p className="text-sm text-slate-500">Escucha la palabra y acierta.</p></button>
+          <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4"><HelpCircle className="w-7 h-7" /></div><h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3><p className="text-sm text-slate-500">Elige la traducción.</p></button>
+          <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4"><Grid className="w-7 h-7" /></div><h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3><p className="text-sm text-slate-500">Encuentra las parejas.</p></button>
+          <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4"><Activity className="w-7 h-7" /></div><h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3><p className="text-sm text-slate-500">Verdadero o Falso.</p></button>
+          <button onClick={() => setActiveGame('connect')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200"><div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4"><Edit2 className="w-7 h-7" /></div><h3 className="text-xl font-bold text-slate-800 mb-2">Conecta</h3><p className="text-sm text-slate-500">Une las parejas.</p></button>
+          <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 md:col-span-2"><div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4"><Mic className="w-7 h-7" /></div><h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3><p className="text-sm text-slate-500">Escucha y acierta.</p></button>
         </div>
       </div>
     </div>
@@ -285,7 +292,6 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
   const [highScore, setHighScore] = useState(() => safeGetStorage('listen_highscore', 0));
   const [selectedOption, setSelectedOption] = useState(null);
   useEffect(() => { startNewRound(); }, []);
-  
   const startNewRound = () => {
     if (cards.length < 4) return;
     const correctCard = cards[Math.floor(Math.random() * cards.length)];
@@ -295,25 +301,16 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
     const distractors = shuffleArray(candidates).slice(0, 3);
     setRound({ card: correctCard, options: shuffleArray([correctCard, ...distractors]) });
     setSelectedOption(null);
-    setTimeout(() => playSmartAudio(correctCard.arabic), 500); // AUDIO
+    setTimeout(() => playSmartAudio(correctCard.arabic), 500);
   };
-
   const handleOptionClick = (option) => {
     if (selectedOption) return;
     setSelectedOption(option);
     if (option.id === round.card.id) {
-        setScore(s => {
-            const newScore = s + 1;
-            if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('listen_highscore', newScore.toString()); }
-            return newScore;
-        });
+        setScore(s => { const newScore = s + 1; if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('listen_highscore', newScore.toString()); } return newScore; });
         setTimeout(startNewRound, 1000);
-    } else {
-        setScore(0);
-        setTimeout(startNewRound, 2000);
-    }
+    } else { setScore(0); setTimeout(startNewRound, 2000); }
   };
-
   if (!round) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -329,86 +326,39 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
   );
 }
 
-// JUEGO NUEVO: CONECTA (REEMPLAZA A EL ESCRIBA)
 function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
   const [items, setItems] = useState([]);
   const [selected, setSelected] = useState([]);
   const [matched, setMatched] = useState([]);
-  const [score, setScore] = useState(0);
-
   useEffect(() => { startNewRound(); }, []);
-
   const startNewRound = () => {
     if (cards.length < 4) return;
     const pool = shuffleArray([...cards]).slice(0, 4);
     const newItems = [];
-    pool.forEach(card => {
-        newItems.push({ id: card.id + '-es', cardId: card.id, text: card.spanish, type: 'es' });
-        newItems.push({ id: card.id + '-ar', cardId: card.id, text: card.arabic, type: 'ar' });
-    });
-    setItems(shuffleArray(newItems));
-    setMatched([]);
-    setSelected([]);
+    pool.forEach(card => { newItems.push({ id: card.id + '-es', cardId: card.id, text: card.spanish, type: 'es' }); newItems.push({ id: card.id + '-ar', cardId: card.id, text: card.arabic, type: 'ar' }); });
+    setItems(shuffleArray(newItems)); setMatched([]); setSelected([]);
   };
-
   const handleClick = (item) => {
     if (matched.includes(item.id) || selected.find(s => s.id === item.id)) return;
-    
-    // AUDIO: Si toco una carta árabe, que la lea
     if (item.type === 'ar') playSmartAudio(item.text);
-
-    const newSelected = [...selected, item];
-    setSelected(newSelected);
-
+    const newSelected = [...selected, item]; setSelected(newSelected);
     if (newSelected.length === 2) {
         if (newSelected[0].cardId === newSelected[1].cardId) {
-            setMatched([...matched, newSelected[0].id, newSelected[1].id]);
-            setSelected([]);
-            setScore(s => s + 1);
-            if (matched.length + 2 === 8) {
-                setTimeout(startNewRound, 1500);
-            }
-        } else {
-            setTimeout(() => setSelected([]), 800);
-        }
+            setMatched([...matched, newSelected[0].id, newSelected[1].id]); setSelected([]);
+            if (matched.length + 2 === 8) setTimeout(startNewRound, 1500);
+        } else { setTimeout(() => setSelected([]), 800); }
     }
   };
-
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative h-[600px]">
-        <div className="bg-amber-600 p-4 text-white flex justify-between items-center">
-            <div className="flex items-center gap-2"><button onClick={onBack} className="hover:bg-amber-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button><h2 className="font-bold text-lg">Conecta</h2></div>
-            <button onClick={onClose}><X/></button>
-        </div>
+        <div className="bg-amber-600 p-4 text-white flex justify-between items-center"><div className="flex items-center gap-2"><button onClick={onBack} className="hover:bg-amber-500 p-1 rounded mr-2"><ArrowLeft className="w-5 h-5"/></button><h2 className="font-bold text-lg">Conecta</h2></div><button onClick={onClose}><X/></button></div>
         <div className="flex-1 p-4 grid grid-cols-2 gap-3 overflow-y-auto content-center">
             {items.map(item => {
-                const isSelected = selected.find(s => s.id === item.id);
-                const isMatched = matched.includes(item.id);
-                let bgClass = "bg-slate-50 border-slate-200 text-slate-700";
-                
-                if (isMatched) return <div key={item.id} className="opacity-0"></div>; // Desaparece al acertar
-
-                if (isSelected) {
-                    if (selected.length === 2 && selected[0].cardId !== selected[1].cardId) {
-                        bgClass = "bg-red-100 border-red-500 text-red-800 animate-shake"; // Fallo
-                    } else {
-                        bgClass = "bg-amber-100 border-amber-500 text-amber-900"; // Seleccionado
-                    }
-                }
-
-                const displayText = item.type === 'ar' ? (showDiacritics ? item.text : removeArabicDiacritics(item.text)) : item.text;
-
-                return (
-                    <button 
-                        key={item.id} 
-                        onClick={() => handleClick(item)} 
-                        className={`p-4 rounded-xl border-2 font-bold transition-all text-sm md:text-base flex items-center justify-center min-h-[80px] shadow-sm active:scale-95 ${bgClass}`}
-                        dir={item.type === 'ar' ? 'rtl' : 'ltr'}
-                    >
-                        {displayText}
-                    </button>
-                );
+                const isSelected = selected.find(s => s.id === item.id); const isMatched = matched.includes(item.id);
+                if (isMatched) return <div key={item.id} className="opacity-0"></div>;
+                let bgClass = isSelected ? (selected.length === 2 && selected[0].cardId !== selected[1].cardId ? "bg-red-100 border-red-500 text-red-800" : "bg-amber-100 border-amber-500 text-amber-900") : "bg-slate-50 border-slate-200 text-slate-700";
+                return <button key={item.id} onClick={() => handleClick(item)} className={`p-4 rounded-xl border-2 font-bold transition-all text-sm md:text-base flex items-center justify-center min-h-[80px] shadow-sm active:scale-95 ${bgClass}`} dir={item.type === 'ar' ? 'rtl' : 'ltr'}>{item.type === 'ar' ? (showDiacritics ? item.text : removeArabicDiacritics(item.text)) : item.text}</button>;
             })}
         </div>
       </div>
@@ -422,21 +372,10 @@ function QuizGame({ onBack, onClose, cards, showDiacritics }) {
   const [highScore, setHighScore] = useState(() => safeGetStorage('quiz_highscore', 0));
   const [selectedOption, setSelectedOption] = useState(null);
   useEffect(() => { startNewRound(); }, []);
-  const startNewRound = () => { if (cards.length < 4) return; const correctCard = cards[Math.floor(Math.random() * cards.length)]; const targetType = getCardType(correctCard); let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType); if (candidates.length < 3) candidates = cards.filter(c => c.id !== correctCard.id); const distractors = shuffleArray(candidates).slice(0, 3); setCurrentRound({ question: correctCard, options: shuffleArray([correctCard, ...distractors]) }); setSelectedOption(null); playSmartAudio(correctCard.spanish); }; // Audio opcional de la pregunta? Mejor al acertar.
+  const startNewRound = () => { if (cards.length < 4) return; const correctCard = cards[Math.floor(Math.random() * cards.length)]; const targetType = getCardType(correctCard); let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType); if (candidates.length < 3) candidates = cards.filter(c => c.id !== correctCard.id); const distractors = shuffleArray(candidates).slice(0, 3); setCurrentRound({ question: correctCard, options: shuffleArray([correctCard, ...distractors]) }); setSelectedOption(null); };
   const handleOptionClick = (option) => { 
-      if (selectedOption) return; 
-      setSelectedOption(option); 
-      const correct = option.id === currentRound.question.id; 
-      if (correct) { 
-          playSmartAudio(option.arabic); // AUDIO al acertar
-          const newScore = score + 1; 
-          setScore(newScore); 
-          if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('quiz_highscore', newScore.toString()); } 
-          setTimeout(startNewRound, 1000); 
-      } else { 
-          setScore(0); 
-          setTimeout(startNewRound, 2500); 
-      } 
+      if (selectedOption) return; setSelectedOption(option); const correct = option.id === currentRound.question.id; 
+      if (correct) { playSmartAudio(option.arabic); const newScore = score + 1; setScore(newScore); if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('quiz_highscore', newScore.toString()); } setTimeout(startNewRound, 1000); } else { setScore(0); setTimeout(startNewRound, 2500); } 
   };
   if (!currentRound) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
   return (
@@ -465,11 +404,8 @@ function MemoryGame({ onBack, onClose, cards, showDiacritics }) {
   }, []);
   const handleCardClick = (index) => {
     if (flipped.length === 2 || flipped.includes(index) || matched.includes(gameCards[index].pairId)) return;
-    
-    // AUDIO: Si es carta árabe, leerla al girar
     const card = gameCards[index];
     if (card.type === 'ar') playSmartAudio(card.content);
-
     const newFlipped = [...flipped, index]; setFlipped(newFlipped);
     if (newFlipped.length === 2) {
       setMoves(m => m + 1);
@@ -506,7 +442,7 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
     if (!isMatch) { let c = cards.filter(x => x.id !== base.id); arabic = c[Math.floor(Math.random() * c.length)].arabic; }
     setRound({ spanish: base.spanish, arabic, isMatch });
     setTimer(d * 100); setGameState('playing');
-    playSmartAudio(arabic); // AUDIO AUTOMÁTICO AL INICIAR RONDA
+    playSmartAudio(arabic); // AUDIO AUTOMÁTICO
     clearInterval(timerRef.current); timerRef.current = setInterval(() => setTimer(t => t - 10), 100);
   };
   const answer = (ans) => { if (gameState !== 'playing') return; clearInterval(timerRef.current); if (ans === round.isMatch) { setScore(s => s + 1); setTimeout(() => nextRound(duration), 500); } else { setGameOver(true); setGameState('incorrect'); } };
@@ -550,45 +486,73 @@ function CardFormModal({ card, categories, onSave, onClose }) {
   );
 }
 
+// RESTAURADO MODAL DE IMPORTACIÓN COMPLETO (TEXTO + ARCHIVO + CÁMARA)
 function SmartImportModal({ onClose, onImport }) {
   const [activeTab, setActiveTab] = useState('text'); 
   const [text, setText] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [cameraStream, setCameraStream] = useState(null);
   const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
+  const videoRef = useRef(null);
+
+  useEffect(() => { return () => { if (cameraStream) cameraStream.getTracks().forEach(t => t.stop()); }; }, [cameraStream]);
+
+  const startCamera = async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        setCameraStream(stream);
+        if (videoRef.current) videoRef.current.srcObject = stream;
+    } catch (e) { alert("Error cámara"); }
+  };
+
+  const capture = () => {
+      if (!videoRef.current) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight;
+      canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+      processImage(canvas.toDataURL('image/jpeg'));
+  };
+
+  const processImage = async (base64) => {
+    if (!apiKey) { alert("Requiere API Key"); return; }
+    setIsProcessing(true);
+    try {
+        const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+        const res = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: [{ type: "text", text: "Extract flashcards JSON: [{category, spanish, arabic, phonetic}]" }, { type: "image_url", image_url: { url: base64 } }] }]
+        });
+        onImport(JSON.parse(res.choices[0].message.content.match(/\[.*\]/s)[0]));
+    } catch (e) { alert(e.message); } finally { setIsProcessing(false); }
+  };
+
+  const processText = () => {
+      try {
+        const lines = text.split('\n').filter(l=>l.trim());
+        const newCards = lines.map(line => {
+            const parts = line.split('|');
+            return { category: 'Importado', spanish: parts[0]?.trim(), arabic: parts[1]?.trim(), phonetic: parts[2]?.trim() || '' };
+        });
+        onImport(newCards);
+      } catch(e) { alert("Formato incorrecto"); }
+  };
 
   const handleFile = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      setIsProcessing(true);
-      // Simulación de lectura PDF (simplificada para evitar errores de librería)
-      setTimeout(() => { alert("Lectura de archivos requiere configuración backend"); setIsProcessing(false); }, 1000);
-  };
-
-  const processText = async () => {
-      if (!text.trim()) return;
-      if (!apiKey) {
-          // Modo simple
-          try {
-            const lines = text.split('\n').filter(l=>l.trim());
-            const newCards = lines.map(line => {
-                const parts = line.split('|');
-                return { category: 'Importado', spanish: parts[0]?.trim(), arabic: parts[1]?.trim(), phonetic: parts[2]?.trim() || '' };
-            });
-            onImport(newCards);
-          } catch(e) { alert("Error formato manual (Usa: Español | Árabe)"); }
-      } else {
-          // Modo IA
+      if (file.type.includes('pdf')) {
           setIsProcessing(true);
           try {
-            const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
-            const response = await openai.chat.completions.create({
-                model: "gpt-4o",
-                messages: [{ role: "user", content: `Extract flashcards JSON: [{category, spanish, arabic, phonetic}]. TEXT: ${text}` }],
-            });
-            const content = response.choices[0].message.content;
-            const jsonMatch = content.match(/\[.*\]/s);
-            if (jsonMatch) onImport(JSON.parse(jsonMatch[0]));
-          } catch (err) { alert("Error API: " + err.message); } finally { setIsProcessing(false); }
+            const ab = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument(ab).promise;
+            let str = "";
+            for(let i=1; i<=pdf.numPages; i++) { const p = await pdf.getPage(i); const t = await p.getTextContent(); str += t.items.map(s=>s.str).join(" ") + "\n"; }
+            setText(str); setActiveTab('text');
+          } catch(e) { alert("Error PDF"); } finally { setIsProcessing(false); }
+      } else {
+          const reader = new FileReader();
+          reader.onload = () => processImage(reader.result);
+          reader.readAsDataURL(file);
       }
   };
 
@@ -596,18 +560,36 @@ function SmartImportModal({ onClose, onImport }) {
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
         <div className="bg-purple-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">Importar</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div>
-        <div className="flex border-b"><button onClick={()=>setActiveTab('text')} className={`flex-1 py-3 font-bold ${activeTab==='text'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Texto</button><button onClick={()=>setActiveTab('file')} className={`flex-1 py-3 font-bold ${activeTab==='file'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Archivo</button></div>
-        <div className="p-6">
-            <input type="password" placeholder="API Key (Opcional)" className="w-full p-2 mb-4 border rounded text-xs" value={apiKey} onChange={e=>{setApiKey(e.target.value); localStorage.setItem('openai_key',e.target.value)}}/>
-            {activeTab === 'text' ? (
+        <div className="flex border-b">
+            <button onClick={()=>setActiveTab('text')} className={`flex-1 py-3 font-bold ${activeTab==='text'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Texto</button>
+            <button onClick={()=>setActiveTab('file')} className={`flex-1 py-3 font-bold ${activeTab==='file'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Archivo</button>
+            <button onClick={()=>{setActiveTab('camera'); startCamera();}} className={`flex-1 py-3 font-bold ${activeTab==='camera'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Cámara</button>
+        </div>
+        <div className="p-6 overflow-y-auto">
+            <input type="password" placeholder="API Key (Opcional para texto, Obligatoria para img)" className="w-full p-2 mb-4 border rounded text-xs" value={apiKey} onChange={e=>{setApiKey(e.target.value); localStorage.setItem('openai_key',e.target.value)}}/>
+            
+            {activeTab === 'text' && (
                 <>
                     <textarea className="w-full h-40 p-2 border rounded text-xs font-mono" value={text} onChange={e=>setText(e.target.value)} placeholder="Ej: Gato | قطة"></textarea>
-                    <button onClick={processText} disabled={isProcessing} className="w-full mt-4 bg-purple-600 text-white py-2 rounded-lg font-bold">{isProcessing ? "Procesando..." : "Procesar"}</button>
+                    <button onClick={processText} className="w-full mt-4 bg-purple-600 text-white py-2 rounded-lg font-bold">Procesar Texto</button>
                 </>
-            ) : (
-                <div className="border-2 border-dashed border-slate-300 rounded-lg h-40 flex flex-col items-center justify-center text-slate-400">
-                    <input type="file" className="absolute opacity-0 w-full h-full cursor-pointer" onChange={handleFile}/>
-                    <p>Subir PDF o Imagen</p>
+            )}
+
+            {activeTab === 'file' && (
+                <div className="border-2 border-dashed border-slate-300 rounded-lg h-40 flex flex-col items-center justify-center text-slate-400 relative">
+                    <input type="file" accept=".pdf,image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFile}/>
+                    {isProcessing ? <Loader className="animate-spin"/> : <><Upload className="mb-2"/> <p>Subir PDF o Imagen</p></>}
+                </div>
+            )}
+
+            {activeTab === 'camera' && (
+                <div className="flex flex-col items-center">
+                    <div className="w-full aspect-video bg-black rounded-lg overflow-hidden mb-4 relative">
+                        <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video>
+                    </div>
+                    <button onClick={capture} disabled={isProcessing} className="bg-purple-600 text-white p-4 rounded-full shadow-lg hover:bg-purple-700 disabled:opacity-50">
+                        {isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <Camera className="w-6 h-6"/>}
+                    </button>
                 </div>
             )}
         </div>
@@ -621,7 +603,7 @@ function MaintenanceModal({ onClose, cards, refreshCards }) {
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
         <div className="bg-blue-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">Mantenimiento</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div>
-        <div className="p-6 text-center"><Settings className="w-12 h-12 text-slate-300 mx-auto mb-4"/><p className="text-slate-500">Modo mantenimiento simplificado.</p></div>
+        <div className="p-6 text-center"><Settings className="w-12 h-12 text-slate-300 mx-auto mb-4"/><p className="text-slate-500">Funciones avanzadas desactivadas en modo seguro.</p></div>
       </div>
     </div>
   );
