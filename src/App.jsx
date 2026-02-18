@@ -318,6 +318,7 @@ function GamesHub({ onClose, cards, showDiacritics }) {
   if (activeGame === 'truefalse') return <TrueFalseGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
   if (activeGame === 'lettergap') return <LetterGapGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
   if (activeGame === 'listening') return <ListeningGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
+  if (activeGame === 'oddoneout') return <OddOneOutGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
 
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -375,7 +376,10 @@ function GamesHub({ onClose, cards, showDiacritics }) {
             <h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3>
             <p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado. ¡Entrena tu oído!</p>
           </button>
+		  
+		  
         </div>
+		
         
         <div className="bg-slate-50 p-4 text-center text-xs text-slate-400 border-t">
             ¡Practicar jugando es la mejor forma de aprender!
