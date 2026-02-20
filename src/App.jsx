@@ -2,13 +2,12 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist'; 
-// IMPORTACIÓN SEGURA DE ICONOS
 import { 
   Search, Volume2, BookOpen, X, Check, ArrowLeft, 
   Play, Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
   Image as ImageIcon, Wand2, Loader,
   Trophy, Frown, CheckCircle, HelpCircle, Grid, Activity, Mic, 
-  FileText, Camera, Upload, Gamepad2, Baseline
+  Camera, Upload, Gamepad2, Baseline, AlertTriangle, ArrowRight
 } from 'lucide-react';
 
 // Configuración del Worker de PDF
@@ -35,7 +34,6 @@ const shuffleArray = (array) => {
   return newArray;
 };
 
-// Función segura para leer localStorage
 const safeGetStorage = (key, fallback) => {
   try {
     const saved = localStorage.getItem(key);
@@ -78,11 +76,9 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   
-  // Preferencias
   const [frontLanguage, setFrontLanguage] = useState(() => localStorage.getItem('pref_lang') || "spanish");
   const [showDiacritics, setShowDiacritics] = useState(() => safeGetStorage('pref_diacritics', true));
   
-  // Modales y Estados
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [editingCard, setEditingCard] = useState(null); 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -90,7 +86,7 @@ export default function App() {
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isGamesHubOpen, setIsGamesHubOpen] = useState(() => safeGetStorage('games_open', false)); 
 
-  // --- AUTO-REPARACIÓN DE ESTILOS ---
+  // Auto-carga de Tailwind CSS
   useEffect(() => {
     if (!document.getElementById('tailwind-cdn')) {
       const script = document.createElement('script');
@@ -210,15 +206,11 @@ export default function App() {
                 </select>
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos">
-                    <Gamepad2 className="w-6 h-6" />
-                </button>
+                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos"><Gamepad2 className="w-6 h-6" /></button>
                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
                     <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
                     <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
-                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>
-                        <Baseline className="w-3.5 h-3.5" />
-                    </button>
+                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}><Baseline className="w-3.5 h-3.5" /></button>
                 </div>
                 <button onClick={handleAdminToggle} className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500' : 'bg-black/20 text-white/70'}`}>{isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}</button>
             </div>
@@ -248,10 +240,242 @@ export default function App() {
       </div>
       {isFormOpen && <CardFormModal card={editingCard} categories={categories.filter(c => c !== "Todos")} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
       {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} onImport={handleBulkImport} />}
-      {isMaintenanceOpen && <MaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} refreshCards={fetchAllCards} />}
+      {isMaintenanceOpen && <AdvancedMaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} setCards={setCards} refreshCards={fetchAllCards} />}
       {isGamesHubOpen && <GamesHub onClose={() => setIsGamesHubOpen(false)} cards={cards} showDiacritics={showDiacritics} />}
     </div>
   );
+}
+
+// --- PANEL DE MANTENIMIENTO AVANZADO ---
+function AdvancedMaintenanceModal({ onClose, cards, setCards, refreshCards }) {
+  const [activeTab, setActiveTab] = useState('table'); // table, duplicates, audit
+
+  return (
+    <div className="fixed inset-0 bg-slate-100 z-50 flex flex-col">
+        <header className="bg-slate-900 text-white shadow-md z-20">
+            <div className="w-full px-6 py-4 flex justify-between items-center">
+                <h1 className="text-xl font-bold flex items-center gap-2"><Settings className="w-6 h-6 text-blue-400"/> Mantenimiento Avanzado</h1>
+                <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X className="w-6 h-6"/></button>
+            </div>
+            <div className="flex px-6 overflow-x-auto border-t border-slate-800">
+                <button onClick={() => setActiveTab('table')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'table' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-400'}`}>Editor Rápido</button>
+                <button onClick={() => setActiveTab('duplicates')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'duplicates' ? 'border-amber-400 text-amber-400' : 'border-transparent text-slate-400'}`}>Buscar Duplicados</button>
+                <button onClick={() => setActiveTab('audit')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'audit' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-400'}`}>Auditoría IA</button>
+            </div>
+        </header>
+        <main className="flex-1 overflow-hidden p-4">
+            {activeTab === 'table' && <TableEditor cards={cards} setCards={setCards} />}
+            {activeTab === 'duplicates' && <DuplicateFinder cards={cards} setCards={setCards} />}
+            {activeTab === 'audit' && <AIAuditor cards={cards} setCards={setCards} refreshCards={refreshCards} />}
+        </main>
+    </div>
+  );
+}
+
+// Sub-herramienta 1: Tabla
+function TableEditor({ cards, setCards }) {
+    const [searchTerm, setSearchTerm] = useState("");
+    const [currentPage, setCurrentPage] = useState(1);
+    const itemsPerPage = 100;
+    const [editingId, setEditingId] = useState(null);
+    const [editForm, setEditForm] = useState({});
+
+    const filteredCards = useMemo(() => {
+        const term = normalizeForSearch(searchTerm);
+        if (!term) return cards;
+        return cards.filter(c => (c.spanish || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").includes(term) || (c.arabic || "").includes(term));
+    }, [cards, searchTerm]);
+
+    const totalPages = Math.ceil(filteredCards.length / itemsPerPage);
+    const displayedCards = useMemo(() => filteredCards.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage), [filteredCards, currentPage]);
+
+    const saveEdit = async () => {
+        try {
+            const { error } = await supabase.from('flashcards').update({ category: editForm.category, spanish: editForm.spanish, arabic: editForm.arabic, phonetic: editForm.phonetic }).eq('id', editingId);
+            if (error) throw error;
+            setCards(prev => prev.map(c => c.id === editingId ? editForm : c));
+            setEditingId(null);
+        } catch (e) { alert(e.message); }
+    };
+
+    const deleteCard = async (id) => {
+        if (!confirm("¿Borrar definitivamente?")) return;
+        try {
+            const { error } = await supabase.from('flashcards').delete().eq('id', id);
+            if (error) throw error;
+            setCards(prev => prev.filter(c => c.id !== id));
+        } catch (e) { alert(e.message); }
+    };
+
+    return (
+        <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="p-4 bg-slate-50 flex flex-col md:flex-row justify-between items-center border-b gap-4">
+                <div className="relative w-full md:max-w-sm">
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                    <input type="text" placeholder="Buscar para editar..." className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
+                </div>
+                <div className="flex gap-2 items-center text-sm font-bold text-slate-500">
+                    <button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="p-2 bg-slate-200 rounded hover:bg-slate-300 disabled:opacity-50"><ArrowLeft className="w-4 h-4"/></button>
+                    Página {currentPage} de {totalPages || 1}
+                    <button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages||totalPages===0} className="p-2 bg-slate-200 rounded hover:bg-slate-300 disabled:opacity-50"><ArrowRight className="w-4 h-4"/></button>
+                </div>
+            </div>
+            <div className="flex-1 overflow-auto">
+                <table className="w-full text-left text-sm border-collapse">
+                    <thead className="bg-slate-100 text-slate-600 sticky top-0 shadow-sm z-10">
+                        <tr><th className="p-3 w-16 text-center">ID</th><th className="p-3 w-1/6">Categoría</th><th className="p-3 w-1/4">Español</th><th className="p-3 w-1/4 text-right">Árabe</th><th className="p-3 w-1/6">Fonética</th><th className="p-3 text-center">Acciones</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {displayedCards.map(c => {
+                            const isEd = editingId === c.id;
+                            return (
+                                <tr key={c.id} className={isEd ? "bg-blue-50" : "hover:bg-slate-50"}>
+                                    <td className="p-3 text-xs text-slate-400 text-center">{c.id}</td>
+                                    {isEd ? (
+                                        <>
+                                            <td className="p-2"><input className="w-full p-2 border rounded text-xs" value={editForm.category} onChange={e=>setEditForm({...editForm, category: e.target.value})}/></td>
+                                            <td className="p-2"><input className="w-full p-2 border rounded text-xs" value={editForm.spanish} onChange={e=>setEditForm({...editForm, spanish: e.target.value})}/></td>
+                                            <td className="p-2"><input className="w-full p-2 border rounded text-xs text-right font-arabic" dir="rtl" value={editForm.arabic} onChange={e=>setEditForm({...editForm, arabic: e.target.value})}/></td>
+                                            <td className="p-2"><input className="w-full p-2 border rounded text-xs font-mono" value={editForm.phonetic} onChange={e=>setEditForm({...editForm, phonetic: e.target.value})}/></td>
+                                            <td className="p-2 flex justify-center gap-1"><button onClick={saveEdit} className="p-2 bg-green-500 text-white rounded shadow hover:bg-green-600"><Check className="w-4 h-4"/></button><button onClick={()=>setEditingId(null)} className="p-2 bg-slate-300 text-slate-700 rounded shadow hover:bg-slate-400"><X className="w-4 h-4"/></button></td>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <td className="p-3"><span className="bg-slate-200 text-slate-700 px-2 py-1 rounded text-[10px] font-bold uppercase">{c.category}</span></td>
+                                            <td className="p-3 font-medium">{c.spanish}</td>
+                                            <td className="p-3 text-right font-arabic text-lg text-blue-700 font-bold" dir="rtl">{c.arabic}</td>
+                                            <td className="p-3 text-xs font-mono text-slate-500">{c.phonetic}</td>
+                                            <td className="p-3 flex justify-center gap-2"><button onClick={()=>{setEditingId(c.id); setEditForm({...c});}} className="text-blue-500 bg-blue-50 p-2 rounded hover:bg-blue-100"><Edit2 className="w-4 h-4"/></button><button onClick={()=>deleteCard(c.id)} className="text-red-500 bg-red-50 p-2 rounded hover:bg-red-100"><Trash2 className="w-4 h-4"/></button></td>
+                                        </>
+                                    )}
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+// Sub-herramienta 2: Duplicados
+function DuplicateFinder({ cards, setCards }) {
+    const duplicateGroups = useMemo(() => {
+        const groups = {};
+        cards.forEach(c => {
+            if (!c.arabic) return;
+            const key = c.arabic.trim();
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(c);
+        });
+        return Object.values(groups).filter(g => g.length > 1);
+    }, [cards]);
+
+    const deleteDuplicate = async (id) => {
+        try {
+            const { error } = await supabase.from('flashcards').delete().eq('id', id);
+            if (error) throw error;
+            setCards(prev => prev.filter(c => c.id !== id));
+        } catch (e) { alert(e.message); }
+    };
+
+    return (
+        <div className="flex flex-col h-full max-w-4xl mx-auto w-full">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 mb-6 flex gap-4 shadow-sm">
+                <AlertTriangle className="w-8 h-8 text-amber-500 flex-shrink-0" />
+                <div><h2 className="font-bold text-amber-800 text-lg">Buscador de Duplicados</h2><p className="text-amber-700 text-sm mt-1">Busca coincidencias exactas en el texto árabe. Borra las sobrantes.</p></div>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-6 pb-20">
+                {duplicateGroups.length === 0 ? (
+                    <div className="text-center py-20 text-slate-400"><CheckCircle className="w-16 h-16 mx-auto mb-4 opacity-50 text-emerald-500"/><h3 className="text-xl font-bold">¡Todo limpio!</h3></div>
+                ) : (
+                    duplicateGroups.map((group, idx) => (
+                        <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                            <div className="bg-slate-800 px-6 py-3 flex justify-between items-center text-white"><span className="font-bold text-sm bg-slate-700 px-3 py-1 rounded-full">Grupo #{idx+1}</span><span className="font-arabic text-2xl text-amber-400 font-bold" dir="rtl">{group[0].arabic}</span></div>
+                            <div className="divide-y divide-slate-100">
+                                {group.map((card, i) => (
+                                    <div key={card.id} className={`p-4 flex items-center justify-between ${i === 0 ? 'bg-emerald-50/50' : 'hover:bg-slate-50'}`}>
+                                        <div className="flex flex-col"><span className="font-bold text-slate-800">{card.spanish}</span><span className="text-xs text-slate-500">ID: {card.id} | Cat: {card.category}</span></div>
+                                        <div className="flex items-center gap-3">
+                                            {i === 0 && <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-2 py-1 rounded">Conservar este</span>}
+                                            <button onClick={() => deleteDuplicate(card.id)} className="p-2 text-red-600 bg-red-100 hover:bg-red-600 hover:text-white rounded transition-colors font-bold text-sm flex items-center gap-2"><Trash2 className="w-4 h-4"/> Borrar</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+    );
+}
+
+// Sub-herramienta 3: Auditoría IA
+function AIAuditor({ cards, setCards, refreshCards }) {
+    const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
+    const [loading, setLoading] = useState(false);
+    const [logs, setLogs] = useState([]);
+    const [auditResults, setAuditResults] = useState([]);
+
+    const handleAudit = async () => {
+        if (!apiKey) { alert("Necesitas tu API Key de OpenAI"); return; }
+        setLoading(true); setAuditResults([]); setLogs(["Conectando con IA..."]);
+        try {
+            const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
+            const batchSize = 15; let allIssues = []; const cardsToAudit = cards.slice(0, 150); 
+            for (let i = 0; i < cardsToAudit.length; i += batchSize) {
+                const batch = cardsToAudit.slice(i, i + batchSize);
+                setLogs(prev => [`Analizando lote ${Math.floor(i/batchSize)+1}...`, ...prev.slice(0,4)]);
+                const miniBatch = batch.map(c => ({ id: c.id, arabic: c.arabic, spanish: c.spanish }));
+                const prompt = `Audita este lote. REGLAS: 1. Elimina tanwin Damma/Kasra final. 2. Mantén tanwin Fath solo en adverbios. 3. Corrige mala traducción. Responde SOLO con JSON array: [{"id": 123, "problem": "motivo", "suggestion": "texto corregido", "field": "arabic"}]. DATOS: ${JSON.stringify(miniBatch)}`;
+                const response = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.2 });
+                let rawContent = response.choices[0].message.content;
+                const start = rawContent.indexOf('['); const end = rawContent.lastIndexOf(']');
+                if (start !== -1 && end !== -1) { try { allIssues = [...allIssues, ...JSON.parse(rawContent.substring(start, end + 1))]; } catch(e) {} }
+            }
+            setAuditResults(allIssues); setLogs(prev => [`✅ Auditoría terminada. ${allIssues.length} sugerencias.`, ...prev]);
+        } catch (e) { setLogs(prev => [`❌ Error: ${e.message}`, ...prev]); } finally { setLoading(false); }
+    };
+
+    const applyFix = async (issue) => {
+        try {
+            const updateData = {};
+            if (issue.field === 'arabic' || !issue.field) updateData.arabic = issue.suggestion;
+            if (issue.field === 'spanish') updateData.spanish = issue.suggestion;
+            await supabase.from('flashcards').update(updateData).eq('id', issue.id);
+            setAuditResults(prev => prev.filter(p => p.id !== issue.id));
+            setCards(prev => prev.map(c => c.id === issue.id ? { ...c, ...updateData } : c));
+        } catch (e) { alert("Error: " + e.message); }
+    };
+
+    return (
+        <div className="flex flex-col h-full max-w-4xl mx-auto w-full">
+            <div className="bg-purple-50 border border-purple-200 rounded-xl p-6 mb-6 shadow-sm">
+                <div className="flex gap-4 items-end">
+                    <div className="flex-1"><label className="block text-xs font-bold text-purple-800 uppercase mb-2">OpenAI API Key</label><input type="password" placeholder="sk-..." className="w-full p-3 border rounded-lg" value={apiKey} onChange={(e) => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }} /></div>
+                    <button onClick={handleAudit} disabled={loading || !apiKey} className="px-8 py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2">{loading ? <Loader className="animate-spin" /> : "Auditar"}</button>
+                </div>
+                {logs.length > 0 && <div className="mt-4 bg-slate-900 text-green-400 font-mono text-xs p-4 rounded-lg h-24 overflow-y-auto">{logs.map((l, i) => <div key={i}>{l}</div>)}</div>}
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-4 pb-20">
+                {auditResults.map(issue => {
+                    const original = cards.find(c => c.id === issue.id);
+                    if (!original) return null;
+                    return (
+                        <div key={issue.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-mono font-bold bg-slate-100 px-2 py-1 rounded">ID: {original.id}</span></div>
+                            <div className="grid grid-cols-2 gap-6 mb-4">
+                                <div className="bg-red-50 p-4 rounded text-center border border-red-100"><p className="text-xs text-red-500 font-bold mb-2 uppercase">Original</p><p className="font-arabic text-2xl" dir="rtl">{original.arabic}</p></div>
+                                <div className="bg-green-50 p-4 rounded text-center border border-green-200"><p className="text-xs text-green-600 font-bold mb-2 uppercase">Sugerencia</p><p className="font-arabic text-2xl font-bold text-green-800" dir="rtl">{issue.suggestion}</p><p className="text-xs text-green-700 mt-2">{issue.problem}</p></div>
+                            </div>
+                            <button onClick={() => applyFix(issue)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex justify-center items-center gap-2 hover:bg-green-700"><Check /> Aplicar Corrección</button>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
 }
 
 // --- HUB DE JUEGOS ---
@@ -385,7 +609,7 @@ function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
         <div className="flex-1 p-4 grid grid-cols-2 gap-3 overflow-y-auto content-center">
             {items.map(item => {
                 const isSelected = selected.find(s => s.id === item.id); const isMatched = matched.includes(item.id);
-                if (isMatched) return <div key={item.id} className="opacity-0"></div>;
+                if (isMatched) return <div key={item.id} className="opacity-0"></div>; 
                 let bgClass = isSelected ? (selected.length === 2 && selected[0].cardId !== selected[1].cardId ? "bg-red-100 border-red-500 text-red-800 animate-shake" : "bg-amber-100 border-amber-500 text-amber-900") : "bg-slate-50 border-slate-200 text-slate-700";
                 return <button key={item.id} onClick={() => handleClick(item)} className={`p-4 rounded-xl border-2 font-bold transition-all text-sm md:text-base flex items-center justify-center min-h-[80px] shadow-sm active:scale-95 ${bgClass}`} dir={item.type === 'ar' ? 'rtl' : 'ltr'}>{item.type === 'ar' ? (showDiacritics ? item.text : removeArabicDiacritics(item.text)) : item.text}</button>;
             })}
@@ -471,7 +695,7 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
     if (!isMatch) { let c = cards.filter(x => x.id !== base.id); arabic = c[Math.floor(Math.random() * c.length)].arabic; }
     setRound({ spanish: base.spanish, arabic, isMatch });
     setTimer(d * 100); setGameState('playing');
-    playSmartAudio(arabic); // AUDIO AUTOMÁTICO AL INICIAR RONDA
+    playSmartAudio(arabic); 
     clearInterval(timerRef.current); timerRef.current = setInterval(() => setTimer(t => t - 10), 100);
   };
   const answer = (ans) => { if (gameState !== 'playing') return; clearInterval(timerRef.current); if (ans === round.isMatch) { setScore(s => s + 1); setTimeout(() => nextRound(duration), 500); } else { setGameOver(true); setGameState('incorrect'); } };
@@ -618,75 +842,6 @@ function SmartImportModal({ onClose, onImport }) {
                     <button onClick={capture} disabled={isProcessing} className="bg-purple-600 text-white p-4 rounded-full shadow-lg hover:bg-purple-700 disabled:opacity-50">
                         {isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <Camera className="w-6 h-6"/>}
                     </button>
-                </div>
-            )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// RESTAURADO EL MODAL DE MANTENIMIENTO COMPLETO (DUPLICADOS + AUDITORÍA)
-function MaintenanceModal({ onClose, cards, refreshCards }) {
-  const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
-  const [activeTab, setActiveTab] = useState('duplicates');
-  const [duplicateGroups, setDuplicateGroups] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [logs, setLogs] = useState([]);
-
-  useEffect(() => {
-    if (activeTab === 'duplicates') {
-      const groups = {};
-      cards.forEach(c => {
-        if (!c.arabic) return;
-        const key = c.arabic.trim();
-        if (!groups[key]) groups[key] = [];
-        groups[key].push(c);
-      });
-      const dups = Object.values(groups).filter(g => g.length > 1);
-      setDuplicateGroups(dups);
-    }
-  }, [activeTab, cards]);
-
-  const handleDeleteDuplicate = async (id) => {
-    if(!confirm("¿Borrar permanentemente?")) return;
-    const { error } = await supabase.from('flashcards').delete().eq('id', id);
-    if (error) alert(error.message);
-    else await refreshCards();
-  };
-
-  const handleAudit = async () => {
-    if (!apiKey) { alert("Necesitas la API Key"); return; }
-    setLoading(true); setLogs(["Iniciando..."]);
-    // (Lógica simplificada para no extender el código demasiado, pero funcional si se conecta)
-    setTimeout(() => { setLogs(prev => ["Auditoría completada (Simulada)", ...prev]); setLoading(false); }, 2000);
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-        <div className="bg-blue-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">Mantenimiento</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div>
-        <div className="flex border-b border-slate-200">
-            <button onClick={() => setActiveTab('duplicates')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'duplicates' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>Duplicados ({duplicateGroups.length})</button>
-            <button onClick={() => setActiveTab('audit')} className={`px-6 py-3 font-bold text-sm ${activeTab === 'audit' ? 'text-blue-700 border-b-2 border-blue-700' : 'text-slate-500'}`}>Auditoría IA</button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-50">
-            {activeTab === 'duplicates' && (
-                <div className="space-y-6">
-                    {duplicateGroups.length === 0 ? <div className="text-center text-slate-400 py-10 flex flex-col items-center"><CheckCircle className="w-12 h-12 mb-2 opacity-20"/><p>¡Limpio!</p></div> : 
-                        duplicateGroups.map((group, idx) => (
-                            <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                                <div className="bg-slate-50 px-4 py-2 border-b border-slate-200 flex justify-between items-center"><span className="font-bold text-slate-600 text-sm">Grupo #{idx+1}</span><span className="font-arabic text-lg text-emerald-700 font-bold" dir="rtl">{group[0].arabic}</span></div>
-                                <div className="divide-y divide-slate-100">{group.map(card => (<div key={card.id} className="p-3 flex items-center justify-between hover:bg-slate-50 transition-colors"><div className="flex items-center gap-3"><span className="text-xs text-slate-400 font-mono w-10">#{card.id}</span><div className="flex flex-col"><span className="font-bold text-slate-800">{card.spanish}</span><span className="text-[10px] text-slate-500">{card.category}</span></div></div><button onClick={() => handleDeleteDuplicate(card.id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"><Trash2 className="w-5 h-5" /></button></div>))}</div>
-                            </div>
-                        ))
-                    }
-                </div>
-            )}
-            {activeTab === 'audit' && (
-                <div className="space-y-4">
-                     <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 mb-4"><label className="block text-xs font-bold text-purple-800 uppercase mb-1">OpenAI API Key</label><input type="password" placeholder="sk-..." className="w-full p-2 border border-purple-200 rounded bg-white text-sm" value={apiKey} onChange={(e) => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }} /><div className="flex gap-2 mt-3"><button onClick={handleAudit} disabled={loading || !apiKey} className="flex-1 bg-purple-600 text-white py-2 rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50 flex justify-center gap-2">{loading ? <Loader className="w-5 h-5 animate-spin" /> : "Iniciar Auditoría"}</button></div></div>
-                     <div className="bg-slate-900 text-green-400 font-mono text-[10px] p-3 rounded-lg h-32 overflow-y-auto">{logs.map((l,i)=><div key={i}>{l}</div>)}</div>
                 </div>
             )}
         </div>
