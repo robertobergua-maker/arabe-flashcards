@@ -3,28 +3,18 @@ import { supabase } from './supabaseClient';
 import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist'; 
 import { 
-  Search, Volume2, BookOpen, X, Check, ArrowLeft, 
-  Play, Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
-  Image as ImageIcon, Wand2, Loader,
-  Trophy, Frown, CheckCircle, HelpCircle, Grid, Activity, Mic, 
-  Camera, Upload, Gamepad2, Baseline, AlertTriangle, ArrowRight
+  Search, Volume2, BookOpen, X, Check, ArrowLeft, ArrowRight,
+  PlayCircle, Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
+  Image as ImageIcon, Wand2, Loader, Trophy, Frown, CheckCircle, 
+  HelpCircle, Grid, Activity, Mic, Camera, Upload, Gamepad2, Baseline, 
+  AlertTriangle, ChevronLeft, ChevronRight, Sparkles, Database, Copy, PartyPopper, Edit3
 } from 'lucide-react';
 
-// Configuración del Worker de PDF
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 
 // --- UTILIDADES ---
-
-const removeArabicDiacritics = (text) => {
-  if (!text) return "";
-  return text.replace(/[\u064B-\u065F\u0670]/g, '');
-};
-
-const normalizeForSearch = (text) => {
-  if (!text) return "";
-  return text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\u064B-\u065F\u0670]/g, ""); 
-};
-
+const removeArabicDiacritics = (text) => text ? text.replace(/[\u064B-\u065F\u0670]/g, '') : "";
+const normalizeForSearch = (text) => text ? text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\u064B-\u065F\u0670]/g, "") : ""; 
 const shuffleArray = (array) => {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
@@ -33,26 +23,13 @@ const shuffleArray = (array) => {
   }
   return newArray;
 };
-
-const safeGetStorage = (key, fallback) => {
-  try {
-    const saved = localStorage.getItem(key);
-    return saved ? JSON.parse(saved) : fallback;
-  } catch (e) {
-    return fallback;
-  }
-};
-
+const safeGetStorage = (key, fallback) => { try { const saved = localStorage.getItem(key); return saved ? JSON.parse(saved) : fallback; } catch (e) { return fallback; } };
 const ARABIC_ALPHABET = ['ا', 'ب', 'ت', 'ث', 'ج', 'ح', 'خ', 'د', 'ذ', 'ر', 'ز', 'س', 'ش', 'ص', 'ض', 'ط', 'ظ', 'ع', 'غ', 'ف', 'ق', 'ك', 'ل', 'م', 'ن', 'ه', 'و', 'ي'];
-
 const getCardType = (card) => {
     if (!card) return 'word';
     if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase';
-    const text = card.spanish || "";
-    const wordCount = text.trim().split(/\s+/).length;
-    return wordCount > 2 ? 'phrase' : 'word';
+    return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word';
 };
-
 const playSmartAudio = (text) => {
     if (!text) return;
     try {
@@ -64,39 +41,27 @@ const playSmartAudio = (text) => {
         const preferredVoice = voices.find(v => v.lang.includes('ar'));
         if (preferredVoice) utterance.voice = preferredVoice;
         window.speechSynthesis.speak(utterance);
-    } catch (e) {
-        console.error("Audio error", e);
-    }
+    } catch (e) { console.error("Audio error", e); }
 };
 
-// --- COMPONENTE PANTALLA DE BIENVENIDA ---
+// --- PANTALLA DE BIENVENIDA ---
 function WelcomeScreen({ onStart }) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden">
-        {/* Fondo decorativo (Iconos flotantes) */}
         <div className="absolute top-10 left-10 text-emerald-500 opacity-10 animate-bounce"><BookOpen size={80} /></div>
         <div className="absolute bottom-20 left-20 text-amber-500 opacity-10"><Volume2 size={60} /></div>
-        <div className="absolute top-20 right-10 text-blue-500 opacity-10 animate-pulse"><Play size={100} /></div>
+        <div className="absolute top-20 right-10 text-blue-500 opacity-10 animate-pulse"><PlayCircle size={100} /></div>
         <div className="absolute bottom-10 right-20 text-purple-500 opacity-10"><ImageIcon size={70} /></div>
 
-        {/* Tarjeta central */}
         <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white">
             <div className="w-28 h-28 bg-gradient-to-br from-emerald-400 to-emerald-600 text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200">
                 <BookOpen size={50} />
             </div>
-            
             <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">¡Bienvenido a!</p>
-            <h1 className="text-4xl font-black text-slate-800 mb-2">Almadrassa</h1>
+            <h1 className="text-4xl font-black text-slate-800 mb-2">Almadrasa</h1>
             <h2 className="text-5xl font-arabic text-emerald-600 mb-6 font-bold drop-shadow-sm" dir="rtl">المدرسة</h2>
-            
-            <p className="text-slate-500 mb-8 leading-relaxed font-medium">
-                Tu espacio interactivo para aprender, repasar y dominar el vocabulario árabe a través de tarjetas y juegos.
-            </p>
-            
-            <button 
-                onClick={onStart}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-3 text-lg"
-            >
+            <p className="text-slate-500 mb-8 leading-relaxed font-medium">Tu espacio interactivo para aprender, repasar y dominar el vocabulario árabe.</p>
+            <button onClick={onStart} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-3 text-lg">
                 Empezar a aprender <ArrowRight size={24} />
             </button>
         </div>
@@ -104,22 +69,15 @@ function WelcomeScreen({ onStart }) {
   );
 }
 
-
 // --- COMPONENTE PRINCIPAL APP ---
 export default function App() {
-  // Pantalla de Bienvenida (Se guarda en sessionStorage para no molestar si recargas la página)
   const [showWelcome, setShowWelcome] = useState(() => !sessionStorage.getItem('welcomed'));
-
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todos");
-  
-  // Preferencias
   const [frontLanguage, setFrontLanguage] = useState(() => localStorage.getItem('pref_lang') || "spanish");
   const [showDiacritics, setShowDiacritics] = useState(() => safeGetStorage('pref_diacritics', true));
-  
-  // Modales y Estados
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [editingCard, setEditingCard] = useState(null); 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -127,13 +85,10 @@ export default function App() {
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isGamesHubOpen, setIsGamesHubOpen] = useState(() => safeGetStorage('games_open', false)); 
 
-  // Auto-carga de Tailwind CSS
   useEffect(() => {
     if (!document.getElementById('tailwind-cdn')) {
       const script = document.createElement('script');
-      script.id = 'tailwind-cdn';
-      script.src = "https://cdn.tailwindcss.com";
-      script.async = true;
+      script.id = 'tailwind-cdn'; script.src = "https://cdn.tailwindcss.com"; script.async = true;
       document.head.appendChild(script);
     }
   }, []);
@@ -152,32 +107,19 @@ export default function App() {
   async function fetchAllCards() {
     try {
       setLoading(true);
-      let allData = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      let allData = []; let page = 0; const pageSize = 1000; let hasMore = true;
       while (hasMore && page < 10) {
         const { data, error } = await supabase.from('flashcards').select('*').range(page * pageSize, (page + 1) * pageSize - 1).order('id', { ascending: false });
         if (error) throw error;
-        if (data && data.length > 0) {
-          allData = [...allData, ...data];
-          if (data.length < pageSize) hasMore = false; else page++;
-        } else { hasMore = false; }
+        if (data && data.length > 0) { allData = [...allData, ...data]; if (data.length < pageSize) hasMore = false; else page++; } else { hasMore = false; }
       }
       const uniqueCards = Array.from(new Map(allData.map(item => [item.id, item])).values());
       setCards(uniqueCards);
     } catch (error) { console.error("Error:", error); } finally { setLoading(false); }
   }
 
-  const handleStart = () => {
-    sessionStorage.setItem('welcomed', 'true');
-    setShowWelcome(false);
-  };
-
-  const handleAdminToggle = () => {
-    if (isAdminMode) setIsAdminMode(false);
-    else { const p = prompt("🔒 Contraseña:"); if (p === "1234") setIsAdminMode(true); }
-  };
+  const handleStart = () => { sessionStorage.setItem('welcomed', 'true'); setShowWelcome(false); };
+  const handleAdminToggle = () => { if (isAdminMode) setIsAdminMode(false); else { const p = prompt("🔒 Contraseña:"); if (p === "1234") setIsAdminMode(true); } };
 
   const handleSaveCard = async (cardData) => {
     try {
@@ -235,16 +177,13 @@ export default function App() {
     return result;
   }, [cards, searchTerm, selectedCategory]);
 
-  // Si debe mostrar la pantalla de bienvenida, renderiza solo eso
-  if (showWelcome) {
-    return <WelcomeScreen onStart={handleStart} />;
-  }
+  if (showWelcome) return <WelcomeScreen onStart={handleStart} />;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
       <header className={`text-white shadow-md z-20 sticky top-0 transition-colors ${isAdminMode ? 'bg-slate-800' : 'bg-emerald-700'}`}>
         <div className="w-full px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Almadrassa"}</h1></div>
+          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Almadrasa"}</h1></div>
           <div className="flex-1 w-full max-w-4xl flex flex-col md:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-white/50" />
@@ -257,15 +196,11 @@ export default function App() {
                 </select>
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos">
-                    <Gamepad2 className="w-6 h-6" />
-                </button>
+                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos"><Gamepad2 className="w-6 h-6" /></button>
                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
                     <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
                     <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
-                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>
-                        <Baseline className="w-3.5 h-3.5" />
-                    </button>
+                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}><Baseline className="w-3.5 h-3.5" /></button>
                 </div>
                 <button onClick={handleAdminToggle} className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500' : 'bg-black/20 text-white/70'}`}>{isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}</button>
             </div>
@@ -277,8 +212,8 @@ export default function App() {
             {isAdminMode && (
               <div className="mb-6 flex flex-wrap justify-center gap-4 animate-fade-in-up">
                 <button onClick={openNewCardModal} className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-full shadow-lg font-bold"><Plus className="w-5 h-5" /> Añadir</button>
-                <button onClick={() => setIsSmartImportOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg font-bold"><Wand2 className="w-5 h-5" /> Importar</button>
-                <button onClick={() => setIsMaintenanceOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-full shadow-lg font-bold"><Settings className="w-5 h-5" /> Mantenimiento</button>
+                <button onClick={() => setIsSmartImportOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg font-bold"><Wand2 className="w-5 h-5" /> Importar IA</button>
+                <button onClick={() => setIsMaintenanceOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-full shadow-lg font-bold"><Settings className="w-5 h-5" /> Mantenimiento BD</button>
               </div>
             )}
             {loading ? (
@@ -303,19 +238,19 @@ export default function App() {
 
 // --- PANEL DE MANTENIMIENTO AVANZADO ---
 function AdvancedMaintenanceModal({ onClose, cards, setCards, refreshCards }) {
-  const [activeTab, setActiveTab] = useState('table'); // table, duplicates, audit
+  const [activeTab, setActiveTab] = useState('table'); 
 
   return (
     <div className="fixed inset-0 bg-slate-100 z-50 flex flex-col">
         <header className="bg-slate-900 text-white shadow-md z-20">
             <div className="w-full px-6 py-4 flex justify-between items-center">
-                <h1 className="text-xl font-bold flex items-center gap-2"><Settings className="w-6 h-6 text-blue-400"/> Mantenimiento Avanzado</h1>
+                <h1 className="text-xl font-bold flex items-center gap-2"><Settings className="w-6 h-6 text-blue-400"/> Mantenimiento BD</h1>
                 <button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X className="w-6 h-6"/></button>
             </div>
             <div className="flex px-6 overflow-x-auto border-t border-slate-800">
-                <button onClick={() => setActiveTab('table')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'table' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-400'}`}>Editor Rápido</button>
-                <button onClick={() => setActiveTab('duplicates')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'duplicates' ? 'border-amber-400 text-amber-400' : 'border-transparent text-slate-400'}`}>Buscar Duplicados</button>
-                <button onClick={() => setActiveTab('audit')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'audit' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-400'}`}>Auditoría IA</button>
+                <button onClick={() => setActiveTab('table')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'table' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-400'}`}><Database className="w-4 h-4"/> Editor Rápido</button>
+                <button onClick={() => setActiveTab('duplicates')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'duplicates' ? 'border-amber-400 text-amber-400' : 'border-transparent text-slate-400'}`}><Copy className="w-4 h-4"/> Duplicados</button>
+                <button onClick={() => setActiveTab('audit')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'audit' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-400'}`}><Sparkles className="w-4 h-4"/> Auditoría IA</button>
             </div>
         </header>
         <main className="flex-1 overflow-hidden p-4">
@@ -363,16 +298,16 @@ function TableEditor({ cards, setCards }) {
     };
 
     return (
-        <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="flex flex-col h-full bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden max-w-6xl mx-auto">
             <div className="p-4 bg-slate-50 flex flex-col md:flex-row justify-between items-center border-b gap-4">
                 <div className="relative w-full md:max-w-sm">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                     <input type="text" placeholder="Buscar para editar..." className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} />
                 </div>
                 <div className="flex gap-2 items-center text-sm font-bold text-slate-500">
-                    <button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="p-2 bg-slate-200 rounded hover:bg-slate-300 disabled:opacity-50"><ArrowLeft className="w-4 h-4"/></button>
+                    <button onClick={()=>setCurrentPage(p=>Math.max(1,p-1))} disabled={currentPage===1} className="p-2 bg-slate-200 rounded hover:bg-slate-300 disabled:opacity-50"><ChevronLeft className="w-4 h-4"/></button>
                     Página {currentPage} de {totalPages || 1}
-                    <button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages||totalPages===0} className="p-2 bg-slate-200 rounded hover:bg-slate-300 disabled:opacity-50"><ArrowRight className="w-4 h-4"/></button>
+                    <button onClick={()=>setCurrentPage(p=>Math.min(totalPages,p+1))} disabled={currentPage===totalPages||totalPages===0} className="p-2 bg-slate-200 rounded hover:bg-slate-300 disabled:opacity-50"><ChevronRight className="w-4 h-4"/></button>
                 </div>
             </div>
             <div className="flex-1 overflow-auto">
@@ -502,14 +437,12 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                 if (start !== -1 && end !== -1) { 
                     try { 
                         const batchIssues = JSON.parse(rawContent.substring(start, end + 1));
-                        
                         const validIssues = batchIssues.filter(issue => {
                             const card = batch.find(c => c.id === issue.id);
                             if(!card) return false;
                             const targetField = issue.field || (/[\\u0600-\\u06FF]/.test(issue.suggestion) ? 'arabic' : 'spanish');
                             return card[targetField] !== issue.suggestion; 
                         });
-
                         allIssues = [...allIssues, ...validIssues]; 
                     } catch(e) {} 
                 }
@@ -543,42 +476,22 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                 {auditResults.map(issue => {
                     const original = cards.find(c => c.id === issue.id);
                     if (!original) return null;
-
                     const fieldToFix = issue.field || (/[\\u0600-\\u06FF]/.test(issue.suggestion) ? 'arabic' : 'spanish');
                     const isArabic = fieldToFix === 'arabic';
                     const originalText = isArabic ? original.arabic : original.spanish;
 
                     return (
                         <div key={issue.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-                            <div className="flex justify-between items-center mb-4">
-                                <span className="text-xs font-mono font-bold text-slate-600 bg-slate-100 px-3 py-1 rounded-full">
-                                    ID: {original.id} | Corrigiendo: {fieldToFix.toUpperCase()}
-                                </span>
-                            </div>
+                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-mono font-bold text-slate-600 bg-slate-100 px-3 py-1 rounded-full">ID: {original.id} | Corrigiendo: {fieldToFix.toUpperCase()}</span></div>
                             <div className="grid grid-cols-2 gap-6 mb-4">
-                                <div className="bg-red-50 p-4 rounded text-center border border-red-100 flex flex-col justify-center">
-                                    <p className="text-xs text-red-500 font-bold mb-3 uppercase">Original</p>
-                                    <p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold text-slate-700'}`} dir={isArabic ? "rtl" : "ltr"}>
-                                        {originalText || "(vacío)"}
-                                    </p>
-                                </div>
-                                <div className="bg-green-50 p-4 rounded text-center border border-green-200 flex flex-col justify-center">
-                                    <p className="text-xs text-green-600 font-bold mb-3 uppercase">Sugerencia IA</p>
-                                    <p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold'} text-green-800`} dir={isArabic ? "rtl" : "ltr"}>
-                                        {issue.suggestion}
-                                    </p>
-                                    <p className="text-xs text-green-700 mt-3 italic bg-green-100 px-2 py-1 rounded inline-block self-center">{issue.problem}</p>
-                                </div>
+                                <div className="bg-red-50 p-4 rounded text-center border border-red-100 flex flex-col justify-center"><p className="text-xs text-red-500 font-bold mb-3 uppercase">Original</p><p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold text-slate-700'}`} dir={isArabic ? "rtl" : "ltr"}>{originalText || "(vacío)"}</p></div>
+                                <div className="bg-green-50 p-4 rounded text-center border border-green-200 flex flex-col justify-center"><p className="text-xs text-green-600 font-bold mb-3 uppercase">Sugerencia IA</p><p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold'} text-green-800`} dir={isArabic ? "rtl" : "ltr"}>{issue.suggestion}</p><p className="text-xs text-green-700 mt-3 italic bg-green-100 px-2 py-1 rounded inline-block self-center">{issue.problem}</p></div>
                             </div>
-                            <button onClick={() => applyFix(issue)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex justify-center items-center gap-2 hover:bg-green-700 transition-colors">
-                                <Check className="w-5 h-5"/> Aplicar Corrección
-                            </button>
+                            <button onClick={() => applyFix(issue)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex justify-center items-center gap-2 hover:bg-green-700 transition-colors"><Check className="w-5 h-5"/> Aplicar Corrección</button>
                         </div>
                     );
                 })}
-                {!loading && logs.length > 0 && auditResults.length === 0 && (
-                    <div className="text-center text-slate-500 py-10 font-bold">¡Auditoría finalizada! Todo correcto.</div>
-                )}
+                {!loading && logs.length > 0 && auditResults.length === 0 && <div className="text-center text-slate-500 py-10 font-bold">¡Auditoría finalizada! Todo correcto.</div>}
             </div>
         </div>
     );
@@ -586,8 +499,7 @@ function AIAuditor({ cards, setCards, refreshCards }) {
 
 // --- HUB DE JUEGOS ---
 function GamesHub({ onClose, cards, showDiacritics }) {
-  const [activeGame, setActiveGame] = useState(() => localStorage.getItem('current_game') || 'menu'); 
-  useEffect(() => { localStorage.setItem('current_game', activeGame); }, [activeGame]);
+  const [activeGame, setActiveGame] = useState('menu'); 
 
   if (activeGame === 'quiz') return <QuizGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
   if (activeGame === 'memory') return <MemoryGame onBack={() => setActiveGame('menu')} cards={cards} onClose={onClose} showDiacritics={showDiacritics} />;
@@ -603,26 +515,11 @@ function GamesHub({ onClose, cards, showDiacritics }) {
           <button onClick={onClose} className="hover:bg-slate-700 p-2 rounded-full transition"><X className="w-6 h-6" /></button>
         </div>
         <div className="p-8 bg-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto max-h-[70vh]">
-          <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
-            <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-indigo-600 group-hover:text-white transition-colors">🧠</div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3><p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción.</p>
-          </button>
-          <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
-            <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-emerald-600 group-hover:text-white transition-colors">🎴</div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3><p className="text-sm text-slate-500">Encuentra las parejas.</p>
-          </button>
-          <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
-            <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-rose-600 group-hover:text-white transition-colors">⚡</div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3><p className="text-sm text-slate-500">Verdadero o Falso. Tienes 3, 5 o 10 segundos.</p>
-          </button>
-          <button onClick={() => setActiveGame('connect')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
-            <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-amber-600 group-hover:text-white transition-colors">🔗</div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Conecta</h3><p className="text-sm text-slate-500">Une las parejas.</p>
-          </button>
-          <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 md:col-span-2 group">
-            <div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-cyan-600 group-hover:text-white transition-colors">🎧</div>
-            <h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3><p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado.</p>
-          </button>
+          <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-indigo-600 group-hover:text-white transition-colors">🧠</div><h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3><p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción.</p></button>
+          <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-emerald-600 group-hover:text-white transition-colors">🎴</div><h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3><p className="text-sm text-slate-500">Encuentra las parejas.</p></button>
+          <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-rose-600 group-hover:text-white transition-colors">⚡</div><h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3><p className="text-sm text-slate-500">Verdadero o Falso. Tienes 3, 5 o 10 segundos.</p></button>
+          <button onClick={() => setActiveGame('connect')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-amber-600 group-hover:text-white transition-colors">🔗</div><h3 className="text-xl font-bold text-slate-800 mb-2">Conecta</h3><p className="text-sm text-slate-500">Une las parejas.</p></button>
+          <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 md:col-span-2 group"><div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-cyan-600 group-hover:text-white transition-colors">🎧</div><h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3><p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado.</p></button>
         </div>
       </div>
     </div>
@@ -637,7 +534,6 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
   const [highScore, setHighScore] = useState(() => safeGetStorage('listen_highscore', 0));
   const [selectedOption, setSelectedOption] = useState(null);
   useEffect(() => { startNewRound(); }, []);
-  
   const startNewRound = () => {
     if (cards.length < 4) return;
     const correctCard = cards[Math.floor(Math.random() * cards.length)];
@@ -649,23 +545,11 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
     setSelectedOption(null);
     setTimeout(() => playSmartAudio(correctCard.arabic), 500); 
   };
-
   const handleOptionClick = (option) => {
-    if (selectedOption) return;
-    setSelectedOption(option);
-    if (option.id === round.card.id) {
-        setScore(s => {
-            const newScore = s + 1;
-            if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('listen_highscore', newScore.toString()); }
-            return newScore;
-        });
-        setTimeout(startNewRound, 1000);
-    } else {
-        setScore(0);
-        setTimeout(startNewRound, 2000);
-    }
+    if (selectedOption) return; setSelectedOption(option);
+    if (option.id === round.card.id) { setScore(s => { const newScore = s + 1; if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('listen_highscore', newScore.toString()); } return newScore; }); setTimeout(startNewRound, 1000); } 
+    else { setScore(0); setTimeout(startNewRound, 2000); }
   };
-
   if (!round) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -685,9 +569,7 @@ function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
   const [items, setItems] = useState([]);
   const [selected, setSelected] = useState([]);
   const [matched, setMatched] = useState([]);
-  
   useEffect(() => { startNewRound(); }, []);
-
   const startNewRound = () => {
     if (cards.length < 4) return;
     const pool = shuffleArray([...cards]).slice(0, 4);
@@ -695,7 +577,6 @@ function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
     pool.forEach(card => { newItems.push({ id: card.id + '-es', cardId: card.id, text: card.spanish, type: 'es' }); newItems.push({ id: card.id + '-ar', cardId: card.id, text: card.arabic, type: 'ar' }); });
     setItems(shuffleArray(newItems)); setMatched([]); setSelected([]);
   };
-
   const handleClick = (item) => {
     if (matched.includes(item.id) || selected.find(s => s.id === item.id)) return;
     if (item.type === 'ar') playSmartAudio(item.text);
@@ -707,7 +588,6 @@ function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
         } else { setTimeout(() => setSelected([]), 800); }
     }
   };
-
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative h-[600px]">
@@ -801,7 +681,7 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
     if (!isMatch) { let c = cards.filter(x => x.id !== base.id); arabic = c[Math.floor(Math.random() * c.length)].arabic; }
     setRound({ spanish: base.spanish, arabic, isMatch });
     setTimer(d * 100); setGameState('playing');
-    playSmartAudio(arabic); // AUDIO AUTOMÁTICO AL INICIAR RONDA
+    playSmartAudio(arabic); 
     clearInterval(timerRef.current); timerRef.current = setInterval(() => setTimer(t => t - 10), 100);
   };
   const answer = (ans) => { if (gameState !== 'playing') return; clearInterval(timerRef.current); if (ans === round.isMatch) { setScore(s => s + 1); setTimeout(() => nextRound(duration), 500); } else { setGameOver(true); setGameState('incorrect'); } };
