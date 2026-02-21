@@ -55,7 +55,7 @@ function WelcomeScreen({ onStart }) {
 
         <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white relative">
             <div className="absolute -top-4 -right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-3 py-1 rounded-full rotate-12 shadow-md animate-pulse flex items-center gap-1" translate="no" className="notranslate">
-                <PartyPopper size={14}/> ¡Ahora con 'La' española!
+                <PartyPopper size={14}/>   !العربية اللغة تعلم
             </div>
 
             <div className="w-28 h-28 bg-gradient-to-br from-emerald-400 to-emerald-600 text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200">
