@@ -47,14 +47,13 @@ const playSmartAudio = (text) => {
 // --- PANTALLA DE BIENVENIDA CON GUIÑO ---
 function WelcomeScreen({ onStart }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden" translate="no">
         <div className="absolute top-10 left-10 text-emerald-500 opacity-10 animate-bounce"><BookOpen size={80} /></div>
         <div className="absolute bottom-20 left-20 text-amber-500 opacity-10"><Volume2 size={60} /></div>
         <div className="absolute top-20 right-10 text-blue-500 opacity-10 animate-pulse"><PlayCircle size={100} /></div>
         <div className="absolute bottom-10 right-20 text-purple-500 opacity-10"><ImageIcon size={70} /></div>
 
         <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white relative">
-            {/* El pequeño guiño flotante */}
             <div className="absolute -top-4 -right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-3 py-1 rounded-full rotate-12 shadow-md animate-pulse flex items-center gap-1">
                 <PartyPopper size={14}/> ¡Ahora con 'La' española!
             </div>
@@ -65,14 +64,10 @@ function WelcomeScreen({ onStart }) {
             
             <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">¡Bienvenido a!</p>
             
-            {/* Título con el guiño visual */}
             <div className="mb-2 relative inline-block">
-                 {/* El 'Al' tachado sutilmente */}
                 <span className="absolute -top-3 -left-5 text-xs text-slate-300 line-through decoration-red-400/50 font-mono -rotate-12 opacity-70">Al-</span>
                 <h1 className="text-4xl font-black text-slate-800">
-                    {/* El 'La' destacado */}
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 text-5xl mr-0.5">La</span>
-                    madrasa
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 text-5xl mr-0.5">La</span>madrasa
                 </h1>
             </div>
 
@@ -894,5 +889,5 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
       <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">{content}</div>
       <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">{tags.map((tag, i) => (<span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>))}</div>
     </div>
-  ); 
+  );
 }
