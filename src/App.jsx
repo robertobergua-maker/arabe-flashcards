@@ -411,7 +411,7 @@ function DuplicateFinder({ cards, setCards }) {
     );
 }
 
-// Sub-herramienta 3: Auditoría IA
+// --- HERRAMIENTA 3: AUDITORÍA IA MEJORADA ---
 function AIAuditor({ cards, setCards, refreshCards }) {
     const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
     const [loading, setLoading] = useState(false);
@@ -423,26 +423,53 @@ function AIAuditor({ cards, setCards, refreshCards }) {
         setLoading(true); setAuditResults([]); setLogs(["Conectando con IA..."]);
         try {
             const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
-            const batchSize = 15; let allIssues = []; const cardsToAudit = cards.slice(0, 150); 
+            const batchSize = 15; 
+            let allIssues = []; 
+            const cardsToAudit = cards.slice(0, 150); 
+            
             for (let i = 0; i < cardsToAudit.length; i += batchSize) {
                 const batch = cardsToAudit.slice(i, i + batchSize);
                 setLogs(prev => [`Analizando lote ${Math.floor(i/batchSize)+1}...`, ...prev.slice(0,4)]);
                 const miniBatch = batch.map(c => ({ id: c.id, arabic: c.arabic, spanish: c.spanish }));
-                const prompt = `Audita este lote. REGLAS: 1. Elimina tanwin Damma/Kasra final. 2. Mantén tanwin Fath solo en adverbios. 3. Corrige mala traducción. Responde SOLO con JSON array: [{"id": 123, "problem": "motivo", "suggestion": "texto corregido", "field": "arabic"}]. DATOS: ${JSON.stringify(miniBatch)}`;
-                const response = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.2 });
+                
+                const prompt = `Audita este lote de tarjetas de vocabulario. 
+                REGLAS: 
+                1. Elimina tanwin Damma/Kasra final en el árabe. 
+                2. Mantén tanwin Fath solo en adverbios. 
+                3. Corrige mala traducción al español. 
+                IMPORTANTE: Si la tarjeta está perfecta, IGNÓRALA.
+                Responde SOLO con JSON array: [{"id": 123, "problem": "motivo", "suggestion": "texto corregido", "field": "arabic" o "spanish"}]. DATOS: ${JSON.stringify(miniBatch)}`;
+                
+                const response = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.1 });
                 let rawContent = response.choices[0].message.content;
                 const start = rawContent.indexOf('['); const end = rawContent.lastIndexOf(']');
-                if (start !== -1 && end !== -1) { try { allIssues = [...allIssues, ...JSON.parse(rawContent.substring(start, end + 1))]; } catch(e) {} }
+                
+                if (start !== -1 && end !== -1) { 
+                    try { 
+                        const batchIssues = JSON.parse(rawContent.substring(start, end + 1));
+                        
+                        // FILTRO ANTI-ALUCINACIONES: Ignorar si la sugerencia es exactamente igual al original
+                        const validIssues = batchIssues.filter(issue => {
+                            const card = batch.find(c => c.id === issue.id);
+                            if(!card) return false;
+                            const targetField = issue.field || (/[\\u0600-\\u06FF]/.test(issue.suggestion) ? 'arabic' : 'spanish');
+                            return card[targetField] !== issue.suggestion; 
+                        });
+
+                        allIssues = [...allIssues, ...validIssues]; 
+                    } catch(e) {} 
+                }
             }
-            setAuditResults(allIssues); setLogs(prev => [`✅ Auditoría terminada. ${allIssues.length} sugerencias.`, ...prev]);
+            setAuditResults(allIssues); setLogs(prev => [`✅ Auditoría terminada. ${allIssues.length} sugerencias útiles.`, ...prev]);
         } catch (e) { setLogs(prev => [`❌ Error: ${e.message}`, ...prev]); } finally { setLoading(false); }
     };
 
     const applyFix = async (issue) => {
         try {
             const updateData = {};
-            if (issue.field === 'arabic' || !issue.field) updateData.arabic = issue.suggestion;
-            if (issue.field === 'spanish') updateData.spanish = issue.suggestion;
+            const targetField = issue.field || (/[\\u0600-\\u06FF]/.test(issue.suggestion) ? 'arabic' : 'spanish');
+            updateData[targetField] = issue.suggestion;
+            
             await supabase.from('flashcards').update(updateData).eq('id', issue.id);
             setAuditResults(prev => prev.filter(p => p.id !== issue.id));
             setCards(prev => prev.map(c => c.id === issue.id ? { ...c, ...updateData } : c));
@@ -462,17 +489,45 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                 {auditResults.map(issue => {
                     const original = cards.find(c => c.id === issue.id);
                     if (!original) return null;
+
+                    // Lógica visual: Detectar si corregimos Español o Árabe para mostrarlo bien
+                    const fieldToFix = issue.field || (/[\\u0600-\\u06FF]/.test(issue.suggestion) ? 'arabic' : 'spanish');
+                    const isArabic = fieldToFix === 'arabic';
+                    const originalText = isArabic ? original.arabic : original.spanish;
+
                     return (
                         <div key={issue.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
-                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-mono font-bold bg-slate-100 px-2 py-1 rounded">ID: {original.id}</span></div>
-                            <div className="grid grid-cols-2 gap-6 mb-4">
-                                <div className="bg-red-50 p-4 rounded text-center border border-red-100"><p className="text-xs text-red-500 font-bold mb-2 uppercase">Original</p><p className="font-arabic text-2xl" dir="rtl">{original.arabic}</p></div>
-                                <div className="bg-green-50 p-4 rounded text-center border border-green-200"><p className="text-xs text-green-600 font-bold mb-2 uppercase">Sugerencia</p><p className="font-arabic text-2xl font-bold text-green-800" dir="rtl">{issue.suggestion}</p><p className="text-xs text-green-700 mt-2">{issue.problem}</p></div>
+                            <div className="flex justify-between items-center mb-4">
+                                <span className="text-xs font-mono font-bold text-slate-600 bg-slate-100 px-3 py-1 rounded-full">
+                                    ID: {original.id} | Corrigiendo: {fieldToFix.toUpperCase()}
+                                </span>
                             </div>
-                            <button onClick={() => applyFix(issue)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex justify-center items-center gap-2 hover:bg-green-700"><Check /> Aplicar Corrección</button>
+                            <div className="grid grid-cols-2 gap-6 mb-4">
+                                {/* CAJA ORIGINAL */}
+                                <div className="bg-red-50 p-4 rounded text-center border border-red-100 flex flex-col justify-center">
+                                    <p className="text-xs text-red-500 font-bold mb-3 uppercase">Original</p>
+                                    <p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold text-slate-700'}`} dir={isArabic ? "rtl" : "ltr"}>
+                                        {originalText || "(vacío)"}
+                                    </p>
+                                </div>
+                                {/* CAJA SUGERENCIA */}
+                                <div className="bg-green-50 p-4 rounded text-center border border-green-200 flex flex-col justify-center">
+                                    <p className="text-xs text-green-600 font-bold mb-3 uppercase">Sugerencia IA</p>
+                                    <p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold'} text-green-800`} dir={isArabic ? "rtl" : "ltr"}>
+                                        {issue.suggestion}
+                                    </p>
+                                    <p className="text-xs text-green-700 mt-3 italic bg-green-100 px-2 py-1 rounded inline-block self-center">{issue.problem}</p>
+                                </div>
+                            </div>
+                            <button onClick={() => applyFix(issue)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex justify-center items-center gap-2 hover:bg-green-700 transition-colors">
+                                <Check className="w-5 h-5"/> Aplicar Corrección
+                            </button>
                         </div>
                     );
                 })}
+                {!loading && logs.length > 0 && auditResults.length === 0 && (
+                    <div className="text-center text-slate-500 py-10 font-bold">¡Auditoría finalizada! Todo correcto.</div>
+                )}
             </div>
         </div>
     );
