@@ -7,7 +7,7 @@ import {
   PlayCircle, Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
   Image as ImageIcon, Wand2, Loader, Trophy, Frown, CheckCircle, 
   HelpCircle, Grid, Activity, Mic, Camera, Upload, Gamepad2, Baseline, 
-  AlertTriangle, ChevronLeft, ChevronRight, Sparkles, Database, Copy, PartyPopper, Edit3
+  AlertTriangle, ChevronLeft, ChevronRight, Sparkles, Database, Copy, PartyPopper
 } from 'lucide-react';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
@@ -44,7 +44,7 @@ const playSmartAudio = (text) => {
     } catch (e) { console.error("Audio error", e); }
 };
 
-// --- PANTALLA DE BIENVENIDA ---
+// --- PANTALLA DE BIENVENIDA CON GUIÑO ---
 function WelcomeScreen({ onStart }) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden">
@@ -53,12 +53,29 @@ function WelcomeScreen({ onStart }) {
         <div className="absolute top-20 right-10 text-blue-500 opacity-10 animate-pulse"><PlayCircle size={100} /></div>
         <div className="absolute bottom-10 right-20 text-purple-500 opacity-10"><ImageIcon size={70} /></div>
 
-        <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white">
+        <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white relative">
+            {/* El pequeño guiño flotante */}
+            <div className="absolute -top-4 -right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-3 py-1 rounded-full rotate-12 shadow-md animate-pulse flex items-center gap-1">
+                <PartyPopper size={14}/> ¡Ahora con 'La' española!
+            </div>
+
             <div className="w-28 h-28 bg-gradient-to-br from-emerald-400 to-emerald-600 text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200">
                 <BookOpen size={50} />
             </div>
+            
             <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">¡Bienvenido a!</p>
-            <h1 className="text-4xl font-black text-slate-800 mb-2">Almadrasa</h1>
+            
+            {/* Título con el guiño visual */}
+            <div className="mb-2 relative inline-block">
+                 {/* El 'Al' tachado sutilmente */}
+                <span className="absolute -top-3 -left-5 text-xs text-slate-300 line-through decoration-red-400/50 font-mono -rotate-12 opacity-70">Al-</span>
+                <h1 className="text-4xl font-black text-slate-800">
+                    {/* El 'La' destacado */}
+                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 text-5xl mr-0.5">La</span>
+                    madrasa
+                </h1>
+            </div>
+
             <h2 className="text-5xl font-arabic text-emerald-600 mb-6 font-bold drop-shadow-sm" dir="rtl">المدرسة</h2>
             <p className="text-slate-500 mb-8 leading-relaxed font-medium">Tu espacio interactivo para aprender, repasar y dominar el vocabulario árabe.</p>
             <button onClick={onStart} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-3 text-lg">
@@ -183,7 +200,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
       <header className={`text-white shadow-md z-20 sticky top-0 transition-colors ${isAdminMode ? 'bg-slate-800' : 'bg-emerald-700'}`}>
         <div className="w-full px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Almadrasa"}</h1></div>
+          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Lamadrasa"}</h1></div>
           <div className="flex-1 w-full max-w-4xl flex flex-col md:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-white/50" />
