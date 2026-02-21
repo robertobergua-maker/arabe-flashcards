@@ -44,17 +44,17 @@ const playSmartAudio = (text) => {
     } catch (e) { console.error("Audio error", e); }
 };
 
-// --- PANTALLA DE BIENVENIDA CON GUIÑO ---
+// --- PANTALLA DE BIENVENIDA CON GUIÑO BLINDADA ---
 function WelcomeScreen({ onStart }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden" translate="no">
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden">
         <div className="absolute top-10 left-10 text-emerald-500 opacity-10 animate-bounce"><BookOpen size={80} /></div>
         <div className="absolute bottom-20 left-20 text-amber-500 opacity-10"><Volume2 size={60} /></div>
         <div className="absolute top-20 right-10 text-blue-500 opacity-10 animate-pulse"><PlayCircle size={100} /></div>
         <div className="absolute bottom-10 right-20 text-purple-500 opacity-10"><ImageIcon size={70} /></div>
 
         <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white relative">
-            <div className="absolute -top-4 -right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-3 py-1 rounded-full rotate-12 shadow-md animate-pulse flex items-center gap-1">
+            <div className="absolute -top-4 -right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-3 py-1 rounded-full rotate-12 shadow-md animate-pulse flex items-center gap-1" translate="no" className="notranslate">
                 <PartyPopper size={14}/> ¡Ahora con 'La' española!
             </div>
 
@@ -62,16 +62,17 @@ function WelcomeScreen({ onStart }) {
                 <BookOpen size={50} />
             </div>
             
-            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">¡Bienvenido a!</p>
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2" translate="no">¡Bienvenido a!</p>
             
-            <div className="mb-2 relative inline-block">
-                <span className="absolute -top-3 -left-5 text-xs text-slate-300 line-through decoration-red-400/50 font-mono -rotate-12 opacity-70">Al-</span>
+            {/* Título blindado contra el traductor automático */}
+            <div className="mb-2 relative inline-block notranslate" translate="no">
+                <span className="absolute -top-3 -left-5 text-xs text-slate-400 line-through decoration-red-400/50 font-mono -rotate-12 opacity-80">Al-</span>
                 <h1 className="text-4xl font-black text-slate-800">
-                    <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-600 to-teal-500 text-5xl mr-0.5">La</span>madrasa
+                    <span className="text-emerald-600 text-5xl mr-0.5">La</span>madrasa
                 </h1>
             </div>
 
-            <h2 className="text-5xl font-arabic text-emerald-600 mb-6 font-bold drop-shadow-sm" dir="rtl">المدرسة</h2>
+            <h2 className="text-5xl font-arabic text-emerald-600 mb-6 font-bold drop-shadow-sm notranslate" translate="no" dir="rtl">المدرسة</h2>
             <p className="text-slate-500 mb-8 leading-relaxed font-medium">Tu espacio interactivo para aprender, repasar y dominar el vocabulario árabe.</p>
             <button onClick={onStart} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-3 text-lg">
                 Empezar a aprender <ArrowRight size={24} />
@@ -96,14 +97,6 @@ export default function App() {
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
   const [isMaintenanceOpen, setIsMaintenanceOpen] = useState(false);
   const [isGamesHubOpen, setIsGamesHubOpen] = useState(() => safeGetStorage('games_open', false)); 
-
-  useEffect(() => {
-    if (!document.getElementById('tailwind-cdn')) {
-      const script = document.createElement('script');
-      script.id = 'tailwind-cdn'; script.src = "https://cdn.tailwindcss.com"; script.async = true;
-      document.head.appendChild(script);
-    }
-  }, []);
 
   useEffect(() => { localStorage.setItem('pref_lang', frontLanguage); }, [frontLanguage]);
   useEffect(() => { localStorage.setItem('pref_diacritics', JSON.stringify(showDiacritics)); }, [showDiacritics]);
@@ -195,7 +188,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
       <header className={`text-white shadow-md z-20 sticky top-0 transition-colors ${isAdminMode ? 'bg-slate-800' : 'bg-emerald-700'}`}>
         <div className="w-full px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Lamadrasa"}</h1></div>
+          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold notranslate" translate="no">{isAdminMode ? "Modo Admin" : "Lamadrasa"}</h1></div>
           <div className="flex-1 w-full max-w-4xl flex flex-col md:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-white/50" />
@@ -224,7 +217,7 @@ export default function App() {
             {isAdminMode && (
               <div className="mb-6 flex flex-wrap justify-center gap-4 animate-fade-in-up">
                 <button onClick={openNewCardModal} className="flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white rounded-full shadow-lg font-bold"><Plus className="w-5 h-5" /> Añadir</button>
-                <button onClick={() => setIsSmartImportOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg font-bold"><Wand2 className="w-5 h-5" /> Importar IA</button>
+                <button onClick={() => setIsSmartImportOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-full shadow-lg font-bold"><Wand2 className="w-5 h-5" /> Importar</button>
                 <button onClick={() => setIsMaintenanceOpen(true)} className="flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-full shadow-lg font-bold"><Settings className="w-5 h-5" /> Mantenimiento BD</button>
               </div>
             )}
@@ -274,7 +267,6 @@ function AdvancedMaintenanceModal({ onClose, cards, setCards, refreshCards }) {
   );
 }
 
-// Sub-herramienta 1: Tabla
 function TableEditor({ cards, setCards }) {
     const [searchTerm, setSearchTerm] = useState("");
     const [currentPage, setCurrentPage] = useState(1);
@@ -360,7 +352,6 @@ function TableEditor({ cards, setCards }) {
     );
 }
 
-// Sub-herramienta 2: Duplicados
 function DuplicateFinder({ cards, setCards }) {
     const duplicateGroups = useMemo(() => {
         const groups = {};
@@ -413,7 +404,6 @@ function DuplicateFinder({ cards, setCards }) {
     );
 }
 
-// Sub-herramienta 3: Auditoría IA Mejorada
 function AIAuditor({ cards, setCards, refreshCards }) {
     const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
     const [loading, setLoading] = useState(false);
@@ -488,6 +478,7 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                 {auditResults.map(issue => {
                     const original = cards.find(c => c.id === issue.id);
                     if (!original) return null;
+
                     const fieldToFix = issue.field || (/[\\u0600-\\u06FF]/.test(issue.suggestion) ? 'arabic' : 'spanish');
                     const isArabic = fieldToFix === 'arabic';
                     const originalText = isArabic ? original.arabic : original.spanish;
@@ -527,11 +518,26 @@ function GamesHub({ onClose, cards, showDiacritics }) {
           <button onClick={onClose} className="hover:bg-slate-700 p-2 rounded-full transition"><X className="w-6 h-6" /></button>
         </div>
         <div className="p-8 bg-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto max-h-[70vh]">
-          <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-indigo-600 group-hover:text-white transition-colors">🧠</div><h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3><p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción.</p></button>
-          <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-emerald-600 group-hover:text-white transition-colors">🎴</div><h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3><p className="text-sm text-slate-500">Encuentra las parejas.</p></button>
-          <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-rose-600 group-hover:text-white transition-colors">⚡</div><h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3><p className="text-sm text-slate-500">Verdadero o Falso. Tienes 3, 5 o 10 segundos.</p></button>
-          <button onClick={() => setActiveGame('connect')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group"><div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-amber-600 group-hover:text-white transition-colors">🔗</div><h3 className="text-xl font-bold text-slate-800 mb-2">Conecta</h3><p className="text-sm text-slate-500">Une las parejas.</p></button>
-          <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 md:col-span-2 group"><div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-cyan-600 group-hover:text-white transition-colors">🎧</div><h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3><p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado.</p></button>
+          <button onClick={() => setActiveGame('quiz')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
+            <div className="w-12 h-12 bg-indigo-100 text-indigo-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-indigo-600 group-hover:text-white transition-colors"><HelpCircle className="w-7 h-7" /></div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Quiz Express</h3><p className="text-sm text-slate-500">¿Eres rápido? Elige la traducción.</p>
+          </button>
+          <button onClick={() => setActiveGame('memory')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
+            <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-emerald-600 group-hover:text-white transition-colors"><Grid className="w-7 h-7" /></div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Memoria</h3><p className="text-sm text-slate-500">Encuentra las parejas.</p>
+          </button>
+          <button onClick={() => setActiveGame('truefalse')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
+            <div className="w-12 h-12 bg-rose-100 text-rose-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-rose-600 group-hover:text-white transition-colors"><Activity className="w-7 h-7" /></div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Velocidad</h3><p className="text-sm text-slate-500">Verdadero o Falso. Tienes 3, 5 o 10 segundos.</p>
+          </button>
+          <button onClick={() => setActiveGame('connect')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 group">
+            <div className="w-12 h-12 bg-amber-100 text-amber-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-amber-600 group-hover:text-white transition-colors"><Edit2 className="w-7 h-7" /></div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Conecta</h3><p className="text-sm text-slate-500">Une las parejas.</p>
+          </button>
+          <button onClick={() => setActiveGame('listening')} className="bg-white p-6 rounded-2xl shadow-md hover:shadow-xl transition-all text-left border border-slate-200 md:col-span-2 group">
+            <div className="w-12 h-12 bg-cyan-100 text-cyan-600 rounded-xl flex items-center justify-center mb-4 text-2xl group-hover:bg-cyan-600 group-hover:text-white transition-colors"><Mic className="w-7 h-7" /></div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">Oído Fino</h3><p className="text-sm text-slate-500">Escucha la palabra en árabe y elige su significado.</p>
+          </button>
         </div>
       </div>
     </div>
@@ -546,6 +552,7 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
   const [highScore, setHighScore] = useState(() => safeGetStorage('listen_highscore', 0));
   const [selectedOption, setSelectedOption] = useState(null);
   useEffect(() => { startNewRound(); }, []);
+  
   const startNewRound = () => {
     if (cards.length < 4) return;
     const correctCard = cards[Math.floor(Math.random() * cards.length)];
@@ -557,11 +564,13 @@ function ListeningGame({ onBack, onClose, cards, showDiacritics }) {
     setSelectedOption(null);
     setTimeout(() => playSmartAudio(correctCard.arabic), 500); 
   };
+
   const handleOptionClick = (option) => {
     if (selectedOption) return; setSelectedOption(option);
     if (option.id === round.card.id) { setScore(s => { const newScore = s + 1; if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('listen_highscore', newScore.toString()); } return newScore; }); setTimeout(startNewRound, 1000); } 
     else { setScore(0); setTimeout(startNewRound, 2000); }
   };
+
   if (!round) return <div className="fixed inset-0 bg-black/90 flex items-center justify-center text-white">Cargando...</div>;
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -581,7 +590,9 @@ function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
   const [items, setItems] = useState([]);
   const [selected, setSelected] = useState([]);
   const [matched, setMatched] = useState([]);
+  
   useEffect(() => { startNewRound(); }, []);
+
   const startNewRound = () => {
     if (cards.length < 4) return;
     const pool = shuffleArray([...cards]).slice(0, 4);
@@ -589,6 +600,7 @@ function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
     pool.forEach(card => { newItems.push({ id: card.id + '-es', cardId: card.id, text: card.spanish, type: 'es' }); newItems.push({ id: card.id + '-ar', cardId: card.id, text: card.arabic, type: 'ar' }); });
     setItems(shuffleArray(newItems)); setMatched([]); setSelected([]);
   };
+
   const handleClick = (item) => {
     if (matched.includes(item.id) || selected.find(s => s.id === item.id)) return;
     if (item.type === 'ar') playSmartAudio(item.text);
@@ -600,6 +612,7 @@ function ConnectGame({ onBack, onClose, cards, showDiacritics }) {
         } else { setTimeout(() => setSelected([]), 800); }
     }
   };
+
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col relative h-[600px]">
@@ -623,7 +636,7 @@ function QuizGame({ onBack, onClose, cards, showDiacritics }) {
   const [highScore, setHighScore] = useState(() => safeGetStorage('quiz_highscore', 0));
   const [selectedOption, setSelectedOption] = useState(null);
   useEffect(() => { startNewRound(); }, []);
-  const startNewRound = () => { if (cards.length < 4) return; const correctCard = cards[Math.floor(Math.random() * cards.length)]; const targetType = getCardType(correctCard); let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType); if (candidates.length < 3) candidates = cards.filter(c => c.id !== correctCard.id); const distractors = shuffleArray(candidates).slice(0, 3); setCurrentRound({ question: correctCard, options: shuffleArray([correctCard, ...distractors]) }); setSelectedOption(null); playSmartAudio(correctCard.spanish); }; 
+  const startNewRound = () => { if (cards.length < 4) return; const correctCard = cards[Math.floor(Math.random() * cards.length)]; const targetType = getCardType(correctCard); let candidates = cards.filter(c => c.id !== correctCard.id && getCardType(c) === targetType); if (candidates.length < 3) candidates = cards.filter(c => c.id !== correctCard.id); const distractors = shuffleArray(candidates).slice(0, 3); setCurrentRound({ question: correctCard, options: shuffleArray([correctCard, ...distractors]) }); setSelectedOption(null); }; 
   const handleOptionClick = (option) => { 
       if (selectedOption) return; setSelectedOption(option); const correct = option.id === currentRound.question.id; 
       if (correct) { playSmartAudio(option.arabic); const newScore = score + 1; setScore(newScore); if (newScore > highScore) { setHighScore(newScore); localStorage.setItem('quiz_highscore', newScore.toString()); } setTimeout(startNewRound, 1000); } else { setScore(0); setTimeout(startNewRound, 2500); } 
