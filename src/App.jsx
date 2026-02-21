@@ -894,5 +894,5 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
       <div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">{content}</div>
       <div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">{tags.map((tag, i) => (<span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>))}</div>
     </div>
-  );
+  ); 
 }
