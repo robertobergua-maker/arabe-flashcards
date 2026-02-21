@@ -69,16 +69,57 @@ const playSmartAudio = (text) => {
     }
 };
 
+// --- COMPONENTE PANTALLA DE BIENVENIDA ---
+function WelcomeScreen({ onStart }) {
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden">
+        {/* Fondo decorativo (Iconos flotantes) */}
+        <div className="absolute top-10 left-10 text-emerald-500 opacity-10 animate-bounce"><BookOpen size={80} /></div>
+        <div className="absolute bottom-20 left-20 text-amber-500 opacity-10"><Volume2 size={60} /></div>
+        <div className="absolute top-20 right-10 text-blue-500 opacity-10 animate-pulse"><Play size={100} /></div>
+        <div className="absolute bottom-10 right-20 text-purple-500 opacity-10"><ImageIcon size={70} /></div>
+
+        {/* Tarjeta central */}
+        <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white">
+            <div className="w-28 h-28 bg-gradient-to-br from-emerald-400 to-emerald-600 text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200">
+                <BookOpen size={50} />
+            </div>
+            
+            <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">¡Bienvenido a!</p>
+            <h1 className="text-4xl font-black text-slate-800 mb-2">Almadrassa</h1>
+            <h2 className="text-5xl font-arabic text-emerald-600 mb-6 font-bold drop-shadow-sm" dir="rtl">المدرسة</h2>
+            
+            <p className="text-slate-500 mb-8 leading-relaxed font-medium">
+                Tu espacio interactivo para aprender, repasar y dominar el vocabulario árabe a través de tarjetas y juegos.
+            </p>
+            
+            <button 
+                onClick={onStart}
+                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg shadow-emerald-200 transition-all active:scale-95 flex items-center justify-center gap-3 text-lg"
+            >
+                Empezar a aprender <ArrowRight size={24} />
+            </button>
+        </div>
+    </div>
+  );
+}
+
+
 // --- COMPONENTE PRINCIPAL APP ---
 export default function App() {
+  // Pantalla de Bienvenida (Se guarda en sessionStorage para no molestar si recargas la página)
+  const [showWelcome, setShowWelcome] = useState(() => !sessionStorage.getItem('welcomed'));
+
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todos");
   
+  // Preferencias
   const [frontLanguage, setFrontLanguage] = useState(() => localStorage.getItem('pref_lang') || "spanish");
   const [showDiacritics, setShowDiacritics] = useState(() => safeGetStorage('pref_diacritics', true));
   
+  // Modales y Estados
   const [isAdminMode, setIsAdminMode] = useState(false);
   const [editingCard, setEditingCard] = useState(null); 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -127,6 +168,11 @@ export default function App() {
       setCards(uniqueCards);
     } catch (error) { console.error("Error:", error); } finally { setLoading(false); }
   }
+
+  const handleStart = () => {
+    sessionStorage.setItem('welcomed', 'true');
+    setShowWelcome(false);
+  };
 
   const handleAdminToggle = () => {
     if (isAdminMode) setIsAdminMode(false);
@@ -189,11 +235,16 @@ export default function App() {
     return result;
   }, [cards, searchTerm, selectedCategory]);
 
+  // Si debe mostrar la pantalla de bienvenida, renderiza solo eso
+  if (showWelcome) {
+    return <WelcomeScreen onStart={handleStart} />;
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
       <header className={`text-white shadow-md z-20 sticky top-0 transition-colors ${isAdminMode ? 'bg-slate-800' : 'bg-emerald-700'}`}>
         <div className="w-full px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
-          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Aprende Árabe"}</h1></div>
+          <div className="flex items-center gap-3"><BookOpen className="w-7 h-7" /><h1 className="text-xl font-bold">{isAdminMode ? "Modo Admin" : "Almadrassa"}</h1></div>
           <div className="flex-1 w-full max-w-4xl flex flex-col md:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-2.5 w-4 h-4 text-white/50" />
@@ -206,11 +257,15 @@ export default function App() {
                 </select>
             </div>
             <div className="flex gap-2">
-                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos"><Gamepad2 className="w-6 h-6" /></button>
+                <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos">
+                    <Gamepad2 className="w-6 h-6" />
+                </button>
                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
                     <button onClick={() => setFrontLanguage('spanish')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'spanish' ? 'bg-white text-slate-800' : 'text-white/70'}`}>ES</button>
                     <button onClick={() => setFrontLanguage('arabic')} className={`px-2 py-1.5 rounded-md text-xs font-bold ${frontLanguage === 'arabic' ? 'bg-white text-slate-800' : 'text-white/70'}`}>AR</button>
-                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}><Baseline className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => setShowDiacritics(!showDiacritics)} className={`px-2 py-1.5 rounded-md text-xs font-bold ${showDiacritics ? 'bg-white text-slate-800' : 'text-white/70'}`}>
+                        <Baseline className="w-3.5 h-3.5" />
+                    </button>
                 </div>
                 <button onClick={handleAdminToggle} className={`p-2 rounded-lg transition-colors ${isAdminMode ? 'bg-red-500' : 'bg-black/20 text-white/70'}`}>{isAdminMode ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}</button>
             </div>
@@ -411,7 +466,7 @@ function DuplicateFinder({ cards, setCards }) {
     );
 }
 
-// --- HERRAMIENTA 3: AUDITORÍA IA MEJORADA ---
+// Sub-herramienta 3: Auditoría IA Mejorada
 function AIAuditor({ cards, setCards, refreshCards }) {
     const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || "");
     const [loading, setLoading] = useState(false);
@@ -448,7 +503,6 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                     try { 
                         const batchIssues = JSON.parse(rawContent.substring(start, end + 1));
                         
-                        // FILTRO ANTI-ALUCINACIONES: Ignorar si la sugerencia es exactamente igual al original
                         const validIssues = batchIssues.filter(issue => {
                             const card = batch.find(c => c.id === issue.id);
                             if(!card) return false;
@@ -490,7 +544,6 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                     const original = cards.find(c => c.id === issue.id);
                     if (!original) return null;
 
-                    // Lógica visual: Detectar si corregimos Español o Árabe para mostrarlo bien
                     const fieldToFix = issue.field || (/[\\u0600-\\u06FF]/.test(issue.suggestion) ? 'arabic' : 'spanish');
                     const isArabic = fieldToFix === 'arabic';
                     const originalText = isArabic ? original.arabic : original.spanish;
@@ -503,14 +556,12 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                                 </span>
                             </div>
                             <div className="grid grid-cols-2 gap-6 mb-4">
-                                {/* CAJA ORIGINAL */}
                                 <div className="bg-red-50 p-4 rounded text-center border border-red-100 flex flex-col justify-center">
                                     <p className="text-xs text-red-500 font-bold mb-3 uppercase">Original</p>
                                     <p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold text-slate-700'}`} dir={isArabic ? "rtl" : "ltr"}>
                                         {originalText || "(vacío)"}
                                     </p>
                                 </div>
-                                {/* CAJA SUGERENCIA */}
                                 <div className="bg-green-50 p-4 rounded text-center border border-green-200 flex flex-col justify-center">
                                     <p className="text-xs text-green-600 font-bold mb-3 uppercase">Sugerencia IA</p>
                                     <p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold'} text-green-800`} dir={isArabic ? "rtl" : "ltr"}>
@@ -750,7 +801,7 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
     if (!isMatch) { let c = cards.filter(x => x.id !== base.id); arabic = c[Math.floor(Math.random() * c.length)].arabic; }
     setRound({ spanish: base.spanish, arabic, isMatch });
     setTimer(d * 100); setGameState('playing');
-    playSmartAudio(arabic); 
+    playSmartAudio(arabic); // AUDIO AUTOMÁTICO AL INICIAR RONDA
     clearInterval(timerRef.current); timerRef.current = setInterval(() => setTimer(t => t - 10), 100);
   };
   const answer = (ans) => { if (gameState !== 'playing') return; clearInterval(timerRef.current); if (ans === round.isMatch) { setScore(s => s + 1); setTimeout(() => nextRound(duration), 500); } else { setGameOver(true); setGameState('incorrect'); } };
