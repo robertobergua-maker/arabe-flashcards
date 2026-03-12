@@ -1156,4 +1156,4 @@ function IdafaGame({ onBack, onClose, cards, showDiacritics }) {
       </div>
     </div>
   );
-}
+} 
