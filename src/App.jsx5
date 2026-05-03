@@ -169,24 +169,7 @@ export default function App() {
       const tags = (card.category || "General").toString().split(';');
       tags.forEach(tag => { if(tag.trim().length > 0) allTags.add(tag.trim()); });
     });
-    
-    const uniqueTags = Array.from(allTags);
-    
-    // Separar Pistas del resto
-    const pistas = uniqueTags.filter(t => t.toLowerCase().startsWith('pista'));
-    const otros = uniqueTags.filter(t => !t.toLowerCase().startsWith('pista'));
-    
-    // Ordenar Pistas numéricamente (1, 2, 3... 10...)
-    pistas.sort((a, b) => {
-      const numA = parseInt(a.match(/\d+/)?.[0] || 0);
-      const numB = parseInt(b.match(/\d+/)?.[0] || 0);
-      return numA - numB;
-    });
-    
-    // Ordenar alfabéticamente el resto
-    otros.sort((a, b) => a.localeCompare(b));
-    
-    return ["Todos", ...pistas, ...otros];
+    return ["Todos", ...Array.from(allTags).sort()];
   }, [cards]);
 
   const filteredCards = useMemo(() => {
@@ -814,19 +797,10 @@ function SmartImportModal({ onClose, onImport }) {
         const newCards = lines
           .map(line => {
             const parts = line.split('|');
-            if (parts.length >= 3) {
-                return { 
-                    category: parts[0]?.trim() || 'General', 
-                    spanish: parts[1]?.trim(), 
-                    arabic: parts[2]?.trim(), 
-                    phonetic: parts[3]?.trim() || '' 
-                };
-            }
             return { category: 'Importado', spanish: parts[0]?.trim(), arabic: parts[1]?.trim(), phonetic: parts[2]?.trim() || '' };
           })
-          .filter(c => c.spanish && c.arabic);
-          
-        if (newCards.length === 0) { alert("No se encontraron líneas válidas."); return; }
+          .filter(c => c.spanish && c.arabic); // ignorar líneas sin los campos obligatorios
+        if (newCards.length === 0) { alert("No se encontraron líneas válidas. Formato esperado: Español | عربي | fonética"); return; }
         onImport(newCards);
       } catch(e) { alert("Formato incorrecto"); }
   };
