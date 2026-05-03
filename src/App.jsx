@@ -113,7 +113,8 @@ export default function App() {
       setLoading(true);
       let allData = []; let page = 0; const pageSize = 1000; let hasMore = true;
       while (hasMore && page < 10) {
-        const { data, error } = await supabase.from('flashcards').select('*').range(page * pageSize, (page + 1) * pageSize - 1).order('id', { ascending: false });
+        // AQUÍ ESTÁ EL CAMBIO: ascending: true
+        const { data, error } = await supabase.from('flashcards').select('*').range(page * pageSize, (page + 1) * pageSize - 1).order('id', { ascending: true });
         if (error) throw error;
         if (data && data.length > 0) { allData = [...allData, ...data]; if (data.length < pageSize) hasMore = false; else page++; } else { hasMore = false; }
       }
@@ -147,7 +148,8 @@ export default function App() {
     try {
       const { data, error } = await supabase.from('flashcards').insert(newCards).select();
       if (error) throw error;
-      if (data) { setCards(prev => [...data, ...prev]); alert(`¡${data.length} importadas!`); setIsSmartImportOpen(false); }
+      // AQUÍ ESTÁ EL CAMBIO: [...prev, ...data]
+      if (data) { setCards(prev => [...prev, ...data]); alert(`¡${data.length} importadas!`); setIsSmartImportOpen(false); }
     } catch (error) { alert("Error: " + error.message); }
   };
 
