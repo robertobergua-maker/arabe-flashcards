@@ -259,6 +259,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     };
 
     // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
+    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
     const handleKnowledgeFile = async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
@@ -286,16 +287,24 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         setProgress({ current: i, total: pdf.numPages, text: `IA leyendo página ${i} de ${pdf.numPages} (${file.name})...` });
                         
                         const page = await pdf.getPage(i);
-                        const viewport = page.getViewport({ scale: 2.0 });
+                        // Bajamos un poco la escala por si la imagen era demasiado grande para OpenAI
+                        const viewport = page.getViewport({ scale: 1.5 });
                         const canvas = document.createElement('canvas');
                         const context = canvas.getContext('2d');
                         canvas.height = viewport.height;
                         canvas.width = viewport.width;
                         
+                        // Pintamos el fondo blanco
+                        context.fillStyle = '#ffffff';
+                        context.fillRect(0, 0, canvas.width, canvas.height);
+                        
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
-                        const base64Image = canvas.toDataURL('image/jpeg');
+                        
+                        // Comprimimos a JPG al 80% de calidad para agilizar la subida
+                        const base64Image = canvas.toDataURL('image/jpeg', 0.8);
 
-                        const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Extrae TODO el vocabulario en árabe (con su traducción al español), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. Responde SOLO con la palabra "NADA" si y solo si la imagen está 100% en blanco o es un dibujo sin un solo texto. En cualquier otro caso, extrae lo que veas.`;
+                        // PROMPT NUEVO: La obligamos a transcribir todo lo que vea. Cero excusas.
+                        const prompt = `Eres un asistente que extrae texto de libros de idiomas. Transcribe TODO el texto, palabras y frases en árabe (con su traducción al español si la hay) que veas en esta imagen. No importa si es un cómic, un ejercicio o un dibujo, tú extrae todo el texto útil que encuentres. Organízalo como una lista de estudio. Si de verdad no hay NINGUNA letra en toda la imagen, responde literalmente "IMAGEN_VACIA".`;
                         
                         const res = await openai.chat.completions.create({
                             model: "gpt-4o",
@@ -304,7 +313,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
 
                         const resultText = res.choices[0].message.content.trim();
                         
-                        if (resultText !== "NADA" && !resultText.includes("NADA")) {
+                        if (!resultText.includes("IMAGEN_VACIA")) {
                             const { data } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
                             if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
                         }
@@ -317,7 +326,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         reader.readAsDataURL(file);
                     });
 
-                    const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Extrae TODO el vocabulario en árabe (con su traducción al español), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. Responde SOLO con la palabra "NADA" si y solo si la imagen está 100% en blanco o es un dibujo sin un solo texto. En cualquier otro caso, extrae lo que veas.`;
+                    const prompt = `Eres un asistente que extrae texto de libros de idiomas. Transcribe TODO el texto, palabras y frases en árabe (con su traducción al español si la hay) que veas en esta imagen. No importa si es un cómic, un ejercicio o un dibujo, tú extrae todo el texto útil que encuentres. Organízalo como una lista de estudio. Si de verdad no hay NINGUNA letra en toda la imagen, responde literalmente "IMAGEN_VACIA".`;
                     
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
@@ -325,7 +334,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                     });
 
                     const resultText = res.choices[0].message.content.trim();
-                    if (resultText !== "NADA" && !resultText.includes("NADA")) {
+                    if (!resultText.includes("IMAGEN_VACIA")) {
                         const { data } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: resultText }]).select();
                         if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
                     }
@@ -340,6 +349,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
 
         } catch (err) {
             alert("Error procesando archivos: " + err.message);
+            console.error("Detalle del error:", err);
         } finally {
             setIsProcessing(false);
             setProgress({ current: 0, total: 0, text: "" });
