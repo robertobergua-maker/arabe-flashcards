@@ -162,7 +162,7 @@ export default function App() {
   }, [cards, searchTerm, selectedCategory]);
 
   if (currentView === 'welcome') return <WelcomeScreen onStartFlashcards={goToFlashcards} onStartExam={goToExam} />;
-  if (currentView === 'exam') return <ExamPrepHub onBack={goToWelcome} apiKey={localStorage.getItem('openai_key')} isAdmin={isAdminMode} />;
+  if (currentView === 'exam') return <ExamPrepHub onBack={goToWelcome} apiKey={localStorage.getItem('openai_key')} isAdmin={isAdminMode} onToggleAdmin={handleAdminToggle} />;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
@@ -227,10 +227,11 @@ export default function App() {
 
 // --- TUTOR IA (EXAMEN 1A2) ---
 // --- TUTOR IA (EXAMEN 1A2) ---
-function ExamPrepHub({ onBack, apiKey, isAdmin }) {
+function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     const [activeTab, setActiveTab] = useState('knowledge');
     const [knowledge, setKnowledge] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
+    const [progress, setProgress] = useState({ current: 0, total: 0, text: "" }); // <-- ESTADO DE PROGRESO
     const [textInput, setTextInput] = useState("");
     const [test, setTest] = useState(null);
     const [correctionResult, setCorrectionResult] = useState("");
@@ -247,13 +248,14 @@ function ExamPrepHub({ onBack, apiKey, isAdmin }) {
         if (!textInput.trim()) return;
         if (!apiKey) { alert("API Key OpenAI requerida."); return; }
         setIsProcessing(true);
+        setProgress({ current: 1, total: 1, text: "Analizando texto escrito..." });
         try {
             const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
             const prompt = `Actúa como profesor de Árabe nivel A2. Analiza este material. Extrae ÚNICAMENTE información útil para examen (reglas, vocabulario, formato) y resume en < 100 palabras. MATERIAL: ${textInput}`;
             const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }] });
             const { data } = await supabase.from('exam_knowledge').insert([{ category: 'Material EOI', content: res.choices[0].message.content }]).select();
             if (data) { setKnowledge([...knowledge, data[0]]); setTextInput(""); alert("¡Material procesado y memorizado!"); }
-        } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
+        } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); setProgress({ current: 0, total: 0, text: "" }); }
     };
 
     // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
@@ -268,16 +270,22 @@ function ExamPrepHub({ onBack, apiKey, isAdmin }) {
 
         setIsProcessing(true);
         let processedCount = 0;
+        let fileIndex = 0;
 
         try {
             const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
 
             for (const file of files) {
+                fileIndex++;
                 if (file.type.includes('pdf')) {
+                    setProgress({ current: 0, total: 0, text: `Abriendo PDF ${fileIndex}/${files.length}: ${file.name}...` });
                     const ab = await file.arrayBuffer();
                     const pdf = await pdfjsLib.getDocument(ab).promise;
                     
                     for(let i=1; i<=pdf.numPages; i++) {
+                        // Actualizar la barra de progreso
+                        setProgress({ current: i, total: pdf.numPages, text: `IA leyendo página ${i} de ${pdf.numPages} (${file.name})...` });
+                        
                         const page = await pdf.getPage(i);
                         const viewport = page.getViewport({ scale: 2.0 });
                         const canvas = document.createElement('canvas');
@@ -288,8 +296,8 @@ function ExamPrepHub({ onBack, apiKey, isAdmin }) {
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
                         const base64Image = canvas.toDataURL('image/jpeg');
 
-                        const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Tu objetivo es crear material de estudio para tu alumno. Extrae TODO el vocabulario en árabe (con su traducción), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. 
-SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibujos sin NINGÚN texto legible. Si hay cualquier texto en árabe o español, resúmelo y organízalo.`;
+                        // PROMPT RELAJADO PARA QUE NO IGNORE LOS CÓMICS
+                        const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Tu objetivo es crear material de estudio. Extrae TODO el vocabulario en árabe (con su traducción al español), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibujos sin NINGÚN texto legible. Si hay cualquier texto útil, resúmelo y organízalo.`;
                         
                         const res = await openai.chat.completions.create({
                             model: "gpt-4o",
@@ -304,35 +312,40 @@ SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibu
                         }
                     }
                 } else if (file.type.startsWith('image/')) {
+                    setProgress({ current: 1, total: 1, text: `Analizando imagen ${fileIndex}/${files.length}: ${file.name}...` });
                     const base64 = await new Promise((resolve) => {
                         const reader = new FileReader();
                         reader.onload = () => resolve(reader.result);
                         reader.readAsDataURL(file);
                     });
 
-                    const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Tu objetivo es crear material de estudio para tu alumno. Extrae TODO el vocabulario en árabe (con su traducción), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. 
-SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibujos sin NINGÚN texto legible. Si hay cualquier texto en árabe o español, resúmelo y organízalo.`;
+                    // PROMPT RELAJADO PARA IMÁGENES SUELTAS
+                    const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Extrae TODO el vocabulario en árabe (con su traducción), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. SOLO responde "NADA" si la imagen no tiene texto legible.`;
                     
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
                         messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64 } }] }]
                     });
 
-                    const { data } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: res.choices[0].message.content }]).select();
-                    if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
+                    const resultText = res.choices[0].message.content.trim();
+                    if (resultText !== "NADA" && !resultText.includes("NADA")) {
+                        const { data } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: resultText }]).select();
+                        if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
+                    }
                 }
             }
             
             if (processedCount > 0) {
-                alert(`¡Proceso completado! Se han leído y memorizado ${processedCount} nuevos bloques de conocimiento visual.`);
+                alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento de tus archivos.`);
             } else {
-                alert("La IA ha revisado los archivos, pero no ha encontrado teoría gramatical o vocabulario útil para memorizar (o solo eran ejercicios en blanco).");
+                alert("La IA ha revisado los archivos, pero la imagen estaba totalmente en blanco o ilegible.");
             }
 
         } catch (err) {
             alert("Error procesando archivos: " + err.message);
         } finally {
             setIsProcessing(false);
+            setProgress({ current: 0, total: 0, text: "" });
             e.target.value = null; 
         }
     };
@@ -371,8 +384,16 @@ SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibu
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
             <header className="bg-indigo-700 text-white p-4 shadow flex items-center justify-between">
-                <div className="flex items-center gap-3"><button onClick={onBack} className="p-2 bg-indigo-800 rounded-full hover:bg-indigo-600 transition"><ArrowLeft size={20}/></button><h1 className="text-xl font-bold">Tutor IA - EOI 1A2</h1></div>
+                <div className="flex items-center gap-3">
+                    <button onClick={onBack} className="p-2 bg-indigo-800 rounded-full hover:bg-indigo-600 transition"><ArrowLeft size={20}/></button>
+                    <h1 className="text-xl font-bold">Tutor IA - EOI 1A2</h1>
+                </div>
+                {/* CANDADO AÑADIDO A LA PANTALLA */}
+                <button onClick={onToggleAdmin} className={`p-2 rounded-lg transition-colors shadow-sm ${isAdmin ? 'bg-red-500 hover:bg-red-600' : 'bg-indigo-800 text-white/70 hover:bg-indigo-600'}`}>
+                    {isAdmin ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+                </button>
             </header>
+            
             <div className="bg-white border-b flex overflow-x-auto">
                 <button onClick={() => setActiveTab('knowledge')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'knowledge' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Database className="w-5 h-5"/> 1. Conocimiento</button>
                 <button onClick={() => setActiveTab('test')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'test' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Activity className="w-5 h-5"/> 2. Simulacro</button>
@@ -393,19 +414,28 @@ SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibu
                             <>
                                 <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA "leerá" las imágenes usando visión avanzada para extraer la gramática y el vocabulario útil.</p>
                                 
+                                {/* ZONA DE CARGA CON BARRA DE PROGRESO */}
                                 <div className="mb-4">
-                                    <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
-                                        <input type="file" accept=".pdf,image/*" multiple className="hidden" onChange={handleKnowledgeFile} />
-                                        {isProcessing ? (
-                                            <Loader className="w-8 h-8 mx-auto mb-2 animate-spin text-indigo-600"/>
-                                        ) : (
+                                    {isProcessing ? (
+                                        <div className="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-6 text-center animate-pulse">
+                                            <Loader className="w-8 h-8 mx-auto mb-3 animate-spin text-indigo-600"/>
+                                            <p className="text-sm font-bold text-indigo-800 mb-2">{progress.text || "Procesando..."}</p>
+                                            {progress.total > 0 && (
+                                                <div className="w-full bg-indigo-200 rounded-full h-2.5 mt-3 overflow-hidden">
+                                                    <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
+                                            <input type="file" accept=".pdf,image/*" multiple className="hidden" onChange={handleKnowledgeFile} />
                                             <Upload className="w-8 h-8 mx-auto mb-2 opacity-80 text-indigo-600"/>
-                                        )}
-                                        <span className="text-sm font-bold block">{isProcessing ? "Analizando imágenes con IA (Puede tardar unos segundos por página)..." : "Haz clic aquí para seleccionar uno o VARIOS archivos"}</span>
-                                    </label>
+                                            <span className="text-sm font-bold block">Haz clic aquí para seleccionar uno o VARIOS archivos</span>
+                                        </label>
+                                    )}
                                 </div>
 
-                                <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si tienes texto puro, pégalo aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
+                                <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si tienes texto puro, pégalo aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} disabled={isProcessing} />
                                 
                                 <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
                                     {isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer Texto y Memorizar</>}
@@ -415,7 +445,7 @@ SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibu
                             <div className="bg-slate-50 border border-slate-200 p-8 rounded-xl text-center text-slate-500">
                                 <Lock className="w-12 h-12 mx-auto mb-3 opacity-20" />
                                 <h3 className="font-bold text-lg mb-2 text-slate-700">Modo Estudiante</h3>
-                                <p className="text-sm">Solo el Administrador puede subir nuevo material de estudio.<br/>Activa el "Modo Admin" en la pantalla principal para desbloquear esta función.</p>
+                                <p className="text-sm">Solo el Administrador puede subir nuevo material de estudio.<br/>Usa el candado de la esquina superior derecha para desbloquear esta función.</p>
                             </div>
                         )}
                         
