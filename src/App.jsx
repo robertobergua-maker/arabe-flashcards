@@ -227,7 +227,6 @@ export default function App() {
 
 // --- TUTOR IA (EXAMEN 1A2) ---
 // --- TUTOR IA (EXAMEN 1A2) ---
-// --- TUTOR IA (EXAMEN 1A2) ---
 function ExamPrepHub({ onBack, apiKey, isAdmin }) {
     const [activeTab, setActiveTab] = useState('knowledge');
     const [knowledge, setKnowledge] = useState([]);
