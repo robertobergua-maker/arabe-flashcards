@@ -20,10 +20,134 @@ const safeGetStorage = (key, fallback) => { try { const saved = localStorage.get
 const getCardType = (card) => { if (!card) return 'word'; if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase'; return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word'; };
 const playSmartAudio = (text) => { if (!text) return; try { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'ar-SA'; utterance.rate = 0.7; const voices = window.speechSynthesis.getVoices(); const preferredVoice = voices.find(v => v.lang.includes('ar')); if (preferredVoice) utterance.voice = preferredVoice; window.speechSynthesis.speak(utterance); } catch (e) { console.error("Audio error", e); } };
 
+const PDF_TEXT_MIN_CHARS = 40;
+const PDF_RENDER_TARGET_SCALE = 2.4;
+const PDF_MAX_CANVAS_SIDE = 2200;
+
+const cleanExtractedText = (text) => (text || "")
+  .replace(/\s+\n/g, "\n")
+  .replace(/\n{3,}/g, "\n\n")
+  .replace(/[ \t]{2,}/g, " ")
+  .trim();
+
+async function extractTextFromPdfPage(page) {
+  try {
+    const textContent = await page.getTextContent();
+    const rawText = textContent.items
+      .map(item => item.str || "")
+      .join(" ");
+    return cleanExtractedText(rawText);
+  } catch (error) {
+    console.warn("No se pudo extraer texto nativo del PDF:", error);
+    return "";
+  }
+}
+
+async function renderPdfPageToDataUrl(page) {
+  const baseViewport = page.getViewport({ scale: 1 });
+  const largestSide = Math.max(baseViewport.width, baseViewport.height);
+  const safeScale = Math.min(PDF_RENDER_TARGET_SCALE, PDF_MAX_CANVAS_SIDE / largestSide);
+  const viewport = page.getViewport({ scale: Math.max(1.4, safeScale) });
+
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', { willReadFrequently: false });
+  canvas.width = Math.ceil(viewport.width);
+  canvas.height = Math.ceil(viewport.height);
+
+  context.save();
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.restore();
+
+  const renderTask = page.render({ canvasContext: context, viewport });
+  await renderTask.promise;
+  const image = canvas.toDataURL('image/jpeg', 0.92);
+  canvas.width = 0;
+  canvas.height = 0;
+  return image;
+}
+
+async function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function parseVisionJsonResponse(rawContent) {
+  const raw = (rawContent || "").trim();
+  try {
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+    return {
+      hasText: Boolean(parsed.hasText),
+      content: cleanExtractedText(parsed.content || ""),
+      notes: parsed.notes || ""
+    };
+  } catch (error) {
+    const content = cleanExtractedText(raw.replace(/^```json|```$/g, ""));
+    return {
+      hasText: content.length > 0 && !/LIENZO_EN_BLANCO|NO_TEXT|SIN_TEXTO/i.test(content),
+      content,
+      notes: "Respuesta no JSON; se guardó el texto recuperado."
+    };
+  }
+}
+
+async function transcribeImageWithOpenAI(openai, imageDataUrl, label = "imagen") {
+  const prompt = `Lee esta ${label} como material de clase de Árabe A2.
+Devuelve SOLO JSON válido con esta forma:
+{
+  "hasText": true,
+  "content": "transcripción completa y ordenada del texto visible",
+  "notes": "observaciones breves si algo está borroso o cortado"
+}
+Reglas:
+- Transcribe todo el texto visible en árabe, español o fonética.
+- Conserva el árabe en escritura árabe y respeta el orden lógico de lectura.
+- Si hay tablas o listas de vocabulario, mantenlas como listas claras.
+- Si no hay ningún texto legible, usa {"hasText": false, "content": "", "notes": "sin texto legible"}.`;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o",
+    response_format: { type: "json_object" },
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } }
+      ]
+    }]
+  });
+
+  return parseVisionJsonResponse(response.choices?.[0]?.message?.content || "");
+}
+
+async function summarizeMaterialWithOpenAI(openai, sourceText, label) {
+  const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
+Analiza el siguiente material y devuelve una ficha útil para preparar examen.
+Incluye, si aparecen: vocabulario, gramática, estructuras de frase, errores habituales y ejemplos.
+No inventes contenido que no esté en el material.
+
+FUENTE: ${label}
+MATERIAL:
+${sourceText}`;
+
+  const response = await openai.chat.completions.create({
+    model: "gpt-4o-mini",
+    messages: [{ role: "user", content: prompt }]
+  });
+
+  return cleanExtractedText(response.choices?.[0]?.message?.content || sourceText);
+}
+
+
 // --- PANTALLA DE BIENVENIDA ---
 function WelcomeScreen({ onStartFlashcards, onStartExam }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden" translate="no" className="notranslate">
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden notranslate" translate="no">
         <div className="absolute top-10 left-10 text-emerald-500 opacity-10 animate-bounce"><BookOpen size={80} /></div>
         <div className="absolute bottom-20 left-20 text-amber-500 opacity-10"><Volume2 size={60} /></div>
         <div className="absolute top-20 right-10 text-blue-500 opacity-10 animate-pulse"><PlayCircle size={100} /></div>
@@ -228,6 +352,7 @@ export default function App() {
 // --- TUTOR IA (EXAMEN 1A2) ---
 // --- TUTOR IA (EXAMEN 1A2) ---
 function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
+    const [examApiKey, setExamApiKey] = useState(() => apiKey || localStorage.getItem('openai_key') || '');
     const [activeTab, setActiveTab] = useState('knowledge');
     const [knowledge, setKnowledge] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -246,11 +371,11 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     // 1. Procesar Texto Libre
     const handleProcessMaterial = async () => {
         if (!textInput.trim()) return;
-        if (!apiKey) { alert("API Key OpenAI requerida."); return; }
+        if (!examApiKey) { alert("API Key OpenAI requerida."); return; }
         setIsProcessing(true);
         setProgress({ current: 1, total: 1, text: "Analizando texto escrito..." });
         try {
-            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
             const prompt = `Actúa como profesor de Árabe nivel A2. Analiza este material. Extrae ÚNICAMENTE información útil para examen (reglas, vocabulario, formato) y resume en < 100 palabras. MATERIAL: ${textInput}`;
             const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }] });
             const { data } = await supabase.from('exam_knowledge').insert([{ category: 'Material EOI', content: res.choices[0].message.content }]).select();
@@ -258,169 +383,133 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); setProgress({ current: 0, total: 0, text: "" }); }
     };
 
-    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
+    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs nativos + PDFs escaneados con visión)
     const handleKnowledgeFile = async (e) => {
-        const files = Array.from(e.target.files);
+        const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
-        
-        if (!apiKey) { 
-            alert("API Key OpenAI requerida para visión."); 
-            return; 
+
+        if (!examApiKey) {
+            alert("API Key OpenAI requerida para procesar PDFs e imágenes.");
+            e.target.value = null;
+            return;
         }
 
         setIsProcessing(true);
         let processedCount = 0;
-        let fileIndex = 0;
-        let lastAiResponse = "";
-        let dbErrorMsg = ""; // <-- NUEVO: Para cazar el error de Supabase
+        let skippedCount = 0;
+        let lastDiagnostic = "";
 
         try {
-            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
 
-            for (const file of files) {
-                fileIndex++;
-                if (file.type.includes('pdf')) {
-                    setProgress({ current: 0, total: 0, text: `Abriendo PDF ${fileIndex}/${files.length}: ${file.name}...` });
+            for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+                const file = files[fileIndex];
+                const currentFile = fileIndex + 1;
+                const fileLabel = `${currentFile}/${files.length}: ${file.name}`;
+
+                if (file.type.includes('pdf') || file.name.toLowerCase().endsWith('.pdf')) {
+                    setProgress({ current: 0, total: 0, text: `Abriendo PDF ${fileLabel}...` });
                     const ab = await file.arrayBuffer();
-                    const pdf = await pdfjsLib.getDocument(ab).promise;
-                    
-                    for(let i=1; i<=pdf.numPages; i++) {
-                        setProgress({ current: i, total: pdf.numPages, text: `IA leyendo página ${i} de ${pdf.numPages} (${file.name})...` });
-                        
-                        const page = await pdf.getPage(i);
-                        const viewport = page.getViewport({ scale: 1.0 }); 
-                        const canvas = document.createElement('canvas');
-                        const context = canvas.getContext('2d');
-                        canvas.height = viewport.height;
-                        canvas.width = viewport.width;
-                        
-                        context.fillStyle = '#ffffff';
-                        context.fillRect(0, 0, canvas.width, canvas.height);
-                        
-                        await page.render({ canvasContext: context, viewport: viewport }).promise;
-                        const base64Image = canvas.toDataURL('image/jpeg', 0.8);
+                    const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
 
-                        const prompt = `Eres un asistente experto. Lee esta imagen. Transcribe TODO el texto, vocabulario y explicaciones (en árabe y español) que veas. Cero excusas. Si la imagen que recibes es un cuadrado completamente en blanco, gris o negro liso sin letras, responde EXACTAMENTE con la palabra: "LIENZO_EN_BLANCO". En cualquier otro caso, escribe todo el texto que veas.`;
-                        
-                        const res = await openai.chat.completions.create({
-                            model: "gpt-4o",
-                            messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64Image } }] }]
-                        });
+                    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+                        const page = await pdf.getPage(pageNumber);
+                        const category = `PDF: ${file.name} (Pág ${pageNumber})`;
+                        setProgress({ current: pageNumber, total: pdf.numPages, text: `Leyendo página ${pageNumber} de ${pdf.numPages} (${file.name})...` });
 
-                        const resultText = res.choices[0].message.content.trim();
-                        lastAiResponse = resultText;
-                        
-                        if (!resultText.includes("LIENZO_EN_BLANCO")) {
-                            // AQUÍ CAZAMOS EL ERROR DE SUPABASE
-                            const { data, error } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
-                            
-                            if (error) {
-                                dbErrorMsg = error.message; // Guardamos el error de la base de datos
-                                console.error("Error de Supabase:", error);
-                            } else if (data) { 
-                                setKnowledge(prev => [...prev, data[0]]); 
-                                processedCount++; 
+                        let pageText = await extractTextFromPdfPage(page);
+
+                        // Si el PDF es escaneado o basado en imágenes, la extracción nativa sale vacía:
+                        // entonces renderizamos la página a alta resolución y usamos visión/OCR.
+                        if (pageText.length < PDF_TEXT_MIN_CHARS) {
+                            setProgress({ current: pageNumber, total: pdf.numPages, text: `OCR visual en página ${pageNumber} de ${pdf.numPages} (${file.name})...` });
+                            const imageDataUrl = await renderPdfPageToDataUrl(page);
+                            const visionResult = await transcribeImageWithOpenAI(openai, imageDataUrl, `página ${pageNumber} del PDF ${file.name}`);
+                            pageText = visionResult.content;
+                            lastDiagnostic = visionResult.notes || visionResult.content || "Sin texto devuelto por visión.";
+                        }
+
+                        page.cleanup?.();
+
+                        if (pageText && pageText.length >= 10) {
+                            const summarized = await summarizeMaterialWithOpenAI(openai, pageText, category);
+                            const { data, error } = await supabase
+                                .from('exam_knowledge')
+                                .insert([{ category, content: summarized }])
+                                .select();
+                            if (error) throw error;
+                            if (data) {
+                                setKnowledge(prev => [...prev, data[0]]);
+                                processedCount++;
                             }
+                        } else {
+                            skippedCount++;
+                            lastDiagnostic = lastDiagnostic || `Página ${pageNumber}: no se detectó texto legible.`;
                         }
                     }
                 } else if (file.type.startsWith('image/')) {
-                    setProgress({ current: 1, total: 1, text: `Analizando imagen ${fileIndex}/${files.length}...` });
-                    const base64 = await new Promise((resolve) => {
-                        const reader = new FileReader();
-                        reader.onload = () => resolve(reader.result);
-                        reader.readAsDataURL(file);
-                    });
+                    setProgress({ current: 1, total: 1, text: `Analizando imagen ${fileLabel}...` });
+                    const imageDataUrl = await fileToDataUrl(file);
+                    const visionResult = await transcribeImageWithOpenAI(openai, imageDataUrl, `imagen ${file.name}`);
+                    lastDiagnostic = visionResult.notes || visionResult.content || "Sin texto devuelto por visión.";
 
-                    const prompt = `Eres un asistente experto. Lee esta imagen. Transcribe TODO el texto, vocabulario y explicaciones (en árabe y español) que veas. Cero excusas. Si la imagen que recibes es un cuadrado completamente en blanco, gris o negro liso sin letras, responde EXACTAMENTE con la palabra: "LIENZO_EN_BLANCO". En cualquier otro caso, escribe todo el texto que veas.`;
-                    
-                    const res = await openai.chat.completions.create({
-                        model: "gpt-4o",
-                        messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64 } }] }]
-                    });
-
-                    const resultText = res.choices[0].message.content.trim();
-                    lastAiResponse = resultText;
-                    
-                    if (!resultText.includes("LIENZO_EN_BLANCO")) {
-                        // AQUÍ CAZAMOS EL ERROR DE SUPABASE
-                        const { data, error } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: resultText }]).select();
-                        
-                        if (error) {
-                            dbErrorMsg = error.message;
-                            console.error("Error de Supabase:", error);
-                        } else if (data) { 
-                            setKnowledge(prev => [...prev, data[0]]); 
-                            processedCount++; 
+                    if (visionResult.hasText && visionResult.content.length >= 10) {
+                        const category = `Foto: ${file.name}`;
+                        const summarized = await summarizeMaterialWithOpenAI(openai, visionResult.content, category);
+                        const { data, error } = await supabase
+                            .from('exam_knowledge')
+                            .insert([{ category, content: summarized }])
+                            .select();
+                        if (error) throw error;
+                        if (data) {
+                            setKnowledge(prev => [...prev, data[0]]);
+                            processedCount++;
                         }
+                    } else {
+                        skippedCount++;
                     }
+                } else {
+                    skippedCount++;
+                    lastDiagnostic = `Formato no soportado: ${file.name}`;
                 }
             }
-            
+
             if (processedCount > 0) {
-                alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento.`);
-            } else if (dbErrorMsg) {
-                // Alerta si la IA leyó bien pero Supabase rechazó guardarlo
-                alert(`¡Ojo! La IA extrajo el texto perfectamente, pero tu base de datos Supabase bloqueó el guardado.\n\nError de Supabase: "${dbErrorMsg}"\n\nRevisa si tienes el RLS activado en la tabla exam_knowledge o si creaste la tabla correctamente.`);
+                alert(`Proceso completado. Bloques guardados: ${processedCount}.${skippedCount ? ` Páginas/archivos omitidos: ${skippedCount}.` : ""}`);
             } else {
-                alert(`La IA no vio texto en el archivo. Respondió:\n\n"${lastAiResponse}"`);
+                alert(`No se guardó ningún bloque. Diagnóstico: ${lastDiagnostic || "no se detectó texto legible en los archivos."}`);
             }
-
-
         } catch (err) {
-            alert("Error procesando archivos: " + err.message);
-            console.error("Detalle del error:", err);
+            console.error("Detalle del error al procesar archivos:", err);
+            alert("Error procesando archivos: " + (err?.message || err));
         } finally {
             setIsProcessing(false);
             setProgress({ current: 0, total: 0, text: "" });
-            e.target.value = null; 
+            e.target.value = null;
         }
     };
 
-    // 3. Generador de Simulacro (NIVEL AVANZADO)
+    // 3. Generador de Simulacro
     const handleGenerateTest = async () => {
         if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
         setIsProcessing(true);
         try {
-            // Unimos todos los bloques guardados para pasárselos a la IA
             const context = knowledge.map(k => k.content).join("\n");
-            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-            
-            // PROMPT ESTRICTO PARA EXÁMENES DIFÍCILES
-            const prompt = `Eres un examinador estricto de la Escuela Oficial de Idiomas (Nivel A2 de Árabe).
-            Aquí tienes los apuntes exactos del alumno:
-            ---
-            ${context}
-            ---
-            Crea un simulacro de examen MUY DIFÍCIL de 5 preguntas tipo test.
-            REGLA 1: Usa EXACTAMENTE el vocabulario, las frases y la gramática que aparecen en los apuntes proporcionados. No inventes palabras que no estén ahí.
-            REGLA 2: Pon distractores (opciones falsas) muy inteligentes que confundan al alumno si no ha estudiado bien (por ejemplo, fallos sutiles en vocales, conjugaciones engañosas o preposiciones incorrectas típicas de hispanohablantes).
-            REGLA 3: Las opciones deben ser 4 en cada pregunta.
-            REGLA 4: Haz 2 preguntas de gramática aplicada a frases del texto, 2 de vocabulario exacto del texto, y 1 de traducción exacta de una frase completa de los apuntes.
-            Responde SOLO en JSON estricto con esta estructura exacta:
-            [{"pregunta": "texto de la pregunta", "opciones": ["opcion1","opcion2","opcion3","opcion4"], "correcta": 0, "explicacion": "Explicación detallada de por qué es la correcta basándote en los apuntes."}]`;
-            
+            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
+            const prompt = `Base de conocimiento de las clases del alumno:\n${context}\n\nGenera simulacro EOI nivel A2: 3 preguntas test (1 gramática, 2 vocab). Responde SOLO en JSON estricto: [{"pregunta": "txt", "opciones": ["a","b","c"], "correcta": 0, "explicacion": "txt"}].`;
             const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }] });
             const rawContent = res.choices[0].message.content.match(/\[.*\]/s);
-            
-            if (rawContent) {
-                setTest(JSON.parse(rawContent[0]));
-            } else {
-                throw new Error("La IA no devolvió el formato esperado.");
-            }
-        } catch (e) { 
-            alert("Error al generar el test: " + e.message); 
-        } finally { 
-            setIsProcessing(false); 
-        }
+            if (rawContent) setTest(JSON.parse(rawContent[0]));
+        } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
     // 4. Corregir examen escrito a mano (Cámara)
     const handleCorrectExam = async (base64Image) => {
-        if (!apiKey) { alert("API Key OpenAI requerida para visión."); return; }
+        if (!examApiKey) { alert("API Key OpenAI requerida para visión."); return; }
         setIsProcessing(true); setUploadedImage(base64Image); setCorrectionResult("");
         try {
             const context = knowledge.map(k => k.content).join("\n");
-            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
             const prompt = `Eres profesor estricto pero empático de árabe (A2 EOI). Base de conocimiento: ${context}. 
             El alumno sube un examen a mano. Lee el árabe. Corrige detalladamente: ortografía, gramática, diacríticos, trazos. 
             Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo.`;
@@ -462,7 +551,21 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         
                         {isAdmin ? (
                             <>
-                                <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA "leerá" las imágenes usando visión avanzada para extraer la gramática y el vocabulario útil.</p>
+                                <div className="mb-4 bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+                                    <label className="block text-xs font-bold text-indigo-800 uppercase mb-2">OpenAI API Key</label>
+                                    <input
+                                        type="password"
+                                        placeholder="sk-..."
+                                        className="w-full p-2 border border-indigo-200 rounded-lg text-xs bg-white"
+                                        value={examApiKey}
+                                        onChange={(event) => {
+                                            setExamApiKey(event.target.value);
+                                            localStorage.setItem('openai_key', event.target.value);
+                                        }}
+                                        disabled={isProcessing}
+                                    />
+                                </div>
+                                <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA leerá primero el texto nativo del PDF y, si la página está basada en imagen, aplicará OCR visual con alta resolución.</p>
                                 
                                 {/* ZONA DE CARGA CON BARRA DE PROGRESO */}
                                 <div className="mb-4">
