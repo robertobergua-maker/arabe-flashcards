@@ -242,7 +242,7 @@ function ExamPrepHub({ onBack, apiKey }) {
         fetchKnowledge();
     }, []);
 
-    // 1. Procesar Texto Libre o Texto de PDF
+    // 1. Procesar Texto Libre
     const handleProcessMaterial = async () => {
         if (!textInput.trim()) return;
         if (!apiKey) { alert("API Key OpenAI requerida."); return; }
@@ -256,74 +256,85 @@ function ExamPrepHub({ onBack, apiKey }) {
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
-    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs e Imágenes de Teoría)
+    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
     const handleKnowledgeFile = async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
         
-        // Comprobar si hay imágenes para pedir la API Key antes de empezar
-        const hasImages = files.some(f => f.type.startsWith('image/'));
-        if (hasImages && !apiKey) { 
-            alert("API Key OpenAI requerida para procesar las imágenes."); 
+        if (!apiKey) { 
+            alert("API Key OpenAI requerida. Necesitamos la IA para 'ver' y leer los PDFs escaneados y las imágenes."); 
             return; 
         }
 
         setIsProcessing(true);
-        let combinedPdfText = "";
-        let processedImagesCount = 0;
+        let processedCount = 0;
 
         try {
+            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+
             for (const file of files) {
                 if (file.type.includes('pdf')) {
-                    // Extraer texto del PDF
+                    // Convertir el PDF a imágenes (página a página) para la IA
                     const ab = await file.arrayBuffer();
                     const pdf = await pdfjsLib.getDocument(ab).promise;
-                    let str = "";
-                    for(let i=1; i<=pdf.numPages; i++) {
-                        const p = await pdf.getPage(i);
-                        const t = await p.getTextContent();
-                        str += t.items.map(s=>s.str).join(" ") + "\n";
-                    }
-                    combinedPdfText += (combinedPdfText ? "\n\n" : "") + `--- Archivo: ${file.name} ---\n` + str;
                     
+                    for(let i=1; i<=pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const viewport = page.getViewport({ scale: 2.0 }); // Alta resolución para que lea bien los diacríticos árabes
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                        const base64Image = canvas.toDataURL('image/jpeg');
+
+                        const prompt = `Actúa como un profesor de Árabe nivel A2. Lee esta imagen extraída de un libro de texto escaneado en PDF. Extrae la teoría gramatical o el vocabulario útil. Si la página solo tiene ejercicios sin resolver, imágenes sin texto útil, o no hay teoría, responde SOLO con la palabra "NADA". Si hay información útil, haz un resumen estructurado en español.`;
+                        
+                        const res = await openai.chat.completions.create({
+                            model: "gpt-4o",
+                            messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64Image } }] }]
+                        });
+
+                        const resultText = res.choices[0].message.content.trim();
+                        
+                        // Si la IA no responde "NADA", lo guardamos en la base de datos
+                        if (resultText !== "NADA" && !resultText.includes("NADA")) {
+                            const { data } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
+                            if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
+                        }
+                    }
                 } else if (file.type.startsWith('image/')) {
-                    // Procesar Imagen con IA
+                    // Procesar Imagen normal
                     const base64 = await new Promise((resolve) => {
                         const reader = new FileReader();
                         reader.onload = () => resolve(reader.result);
                         reader.readAsDataURL(file);
                     });
 
-                    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-                    const prompt = `Actúa como profesor de Árabe nivel A2. Analiza esta imagen de unos apuntes o libro de texto. Extrae ÚNICAMENTE información útil para preparar un examen (reglas gramaticales, traducciones de vocabulario clave, ejemplos importantes) y haz un resumen estructurado en español en menos de 100 palabras.`;
+                    const prompt = `Actúa como profesor de Árabe nivel A2. Analiza esta imagen de unos apuntes o libro de texto. Extrae ÚNICAMENTE información útil para preparar un examen (reglas gramaticales, vocabulario clave) y resúmelo de forma clara.`;
                     
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
                         messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64 } }] }]
                     });
 
-                    const { data } = await supabase.from('exam_knowledge').insert([{ category: `Apunte: ${file.name}`, content: res.choices[0].message.content }]).select();
-                    if (data) { 
-                        setKnowledge(prev => [...prev, data[0]]); 
-                        processedImagesCount++;
-                    }
+                    const { data } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: res.choices[0].message.content }]).select();
+                    if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
                 }
             }
-
-            // Avisos finales según lo que se haya subido
-            if (combinedPdfText) {
-                setTextInput((prev) => prev + (prev ? "\n\n" : "") + combinedPdfText);
-                alert("Textos de PDF(s) extraídos al cuadro de texto. Revisa y dale a 'Extraer y Memorizar'.");
-            }
-            if (processedImagesCount > 0) {
-                alert(`¡${processedImagesCount} imagen(es) analizada(s) y conocimiento guardado!`);
+            
+            if (processedCount > 0) {
+                alert(`¡Proceso completado! Se han leído y memorizado ${processedCount} nuevos bloques de conocimiento visual.`);
+            } else {
+                alert("La IA ha revisado los archivos, pero no ha encontrado teoría gramatical o vocabulario útil para memorizar (o solo eran ejercicios en blanco).");
             }
 
         } catch (err) {
             alert("Error procesando archivos: " + err.message);
         } finally {
             setIsProcessing(false);
-            e.target.value = null; // Resetea el input para poder subir los mismos archivos de nuevo si se equivocó
+            e.target.value = null; // Resetea el botón para subir más
         }
     };
 
@@ -375,22 +386,21 @@ function ExamPrepHub({ onBack, apiKey }) {
                 {activeTab === 'knowledge' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
                         <h2 className="text-xl font-bold text-indigo-800 mb-2">Alimentar a la IA</h2>
-                        <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra, PDFs de clase o pega apuntes. Puedes seleccionar varios archivos a la vez.</p>
+                        <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA "leerá" las imágenes usando visión avanzada para extraer la gramática y el vocabulario útil.</p>
                         
                         <div className="mb-4">
                             <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
-                                {/* AQUÍ HEMOS AÑADIDO EL ATRIBUTO "multiple" */}
                                 <input type="file" accept=".pdf,image/*" multiple className="hidden" onChange={handleKnowledgeFile} />
                                 {isProcessing ? (
                                     <Loader className="w-8 h-8 mx-auto mb-2 animate-spin text-indigo-600"/>
                                 ) : (
                                     <Upload className="w-8 h-8 mx-auto mb-2 opacity-80 text-indigo-600"/>
                                 )}
-                                <span className="text-sm font-bold block">{isProcessing ? "Analizando archivos con IA..." : "Haz clic aquí para seleccionar uno o VARIOS archivos"}</span>
+                                <span className="text-sm font-bold block">{isProcessing ? "Analizando imágenes con IA (Puede tardar unos segundos por página)..." : "Haz clic aquí para seleccionar uno o VARIOS archivos"}</span>
                             </label>
                         </div>
 
-                        <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si lo prefieres, pega el texto manualmente aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
+                        <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si tienes texto puro, pégalo aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
                         
                         <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
                             {isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer Texto y Memorizar</>}
