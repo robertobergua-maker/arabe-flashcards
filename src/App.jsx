@@ -281,30 +281,36 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                 if (file.type.includes('pdf')) {
                     setProgress({ current: 0, total: 0, text: `Abriendo PDF ${fileIndex}/${files.length}: ${file.name}...` });
                     const ab = await file.arrayBuffer();
+                    
+                    // Cargamos el documento PDF
                     const pdf = await pdfjsLib.getDocument(ab).promise;
                     
                     for(let i=1; i<=pdf.numPages; i++) {
                         setProgress({ current: i, total: pdf.numPages, text: `IA leyendo página ${i} de ${pdf.numPages} (${file.name})...` });
                         
                         const page = await pdf.getPage(i);
-                        // Bajamos un poco la escala por si la imagen era demasiado grande para OpenAI
-                        const viewport = page.getViewport({ scale: 1.5 });
+                        // BAJAMOS LA ESCALA A 1.0 PARA EVITAR QUE EL NAVEGADOR COLAPSE Y DIBUJE EN BLANCO
+                        const viewport = page.getViewport({ scale: 1.0 }); 
                         const canvas = document.createElement('canvas');
                         const context = canvas.getContext('2d');
                         canvas.height = viewport.height;
                         canvas.width = viewport.width;
                         
-                        // Pintamos el fondo blanco
                         context.fillStyle = '#ffffff';
                         context.fillRect(0, 0, canvas.width, canvas.height);
                         
-                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                        // Esperamos pacientemente a que se dibuje de verdad
+                        const renderContext = { canvasContext: context, viewport: viewport };
+                        await page.render(renderContext).promise;
                         
-                        // Comprimimos a JPG al 80% de calidad para agilizar la subida
+                        // Comprimimos la imagen
                         const base64Image = canvas.toDataURL('image/jpeg', 0.8);
+                        
+                        // Chivato temporal: Imprime en la consola de tu navegador los primeros caracteres de la imagen generada. 
+                        // Si son todo 'A's o el texto es super corto, es que se generó en blanco.
+                        console.log(`Página ${i} convertida a imagen. Longitud: ${base64Image.length}`);
 
-                        // PROMPT NUEVO: La obligamos a transcribir todo lo que vea. Cero excusas.
-                        const prompt = `Eres un asistente que extrae texto de libros de idiomas. Transcribe TODO el texto, palabras y frases en árabe (con su traducción al español si la hay) que veas en esta imagen. No importa si es un cómic, un ejercicio o un dibujo, tú extrae todo el texto útil que encuentres. Organízalo como una lista de estudio. Si de verdad no hay NINGUNA letra en toda la imagen, responde literalmente "IMAGEN_VACIA".`;
+                        const prompt = `Eres un profesor de árabe de la Escuela Oficial de Idiomas. En esta imagen hay una página de apuntes (puede haber cómics, tablas, ejercicios...). Extrae TODO el vocabulario árabe con su traducción al español y cualquier regla gramatical útil. Transcríbelo y resúmelo. Si de verdad crees que no hay NADA de texto en árabe o español (ni siquiera en los dibujos), responde SOLO con la palabra "IMAGEN_VACIA".`;
                         
                         const res = await openai.chat.completions.create({
                             model: "gpt-4o",
@@ -316,6 +322,8 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         if (!resultText.includes("IMAGEN_VACIA")) {
                             const { data } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
                             if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
+                        } else {
+                            console.log(`La IA devolvió IMAGEN_VACIA para la página ${i}`);
                         }
                     }
                 } else if (file.type.startsWith('image/')) {
@@ -326,7 +334,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         reader.readAsDataURL(file);
                     });
 
-                    const prompt = `Eres un asistente que extrae texto de libros de idiomas. Transcribe TODO el texto, palabras y frases en árabe (con su traducción al español si la hay) que veas en esta imagen. No importa si es un cómic, un ejercicio o un dibujo, tú extrae todo el texto útil que encuentres. Organízalo como una lista de estudio. Si de verdad no hay NINGUNA letra en toda la imagen, responde literalmente "IMAGEN_VACIA".`;
+                    const prompt = `Eres un profesor de árabe de la Escuela Oficial de Idiomas. En esta imagen hay apuntes (puede haber cómics, tablas, ejercicios...). Extrae TODO el vocabulario árabe con su traducción al español y cualquier regla gramatical. Transcríbelo y resúmelo. Si de verdad crees que no hay NADA de texto en árabe o español, responde SOLO con la palabra "IMAGEN_VACIA".`;
                     
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
@@ -342,7 +350,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
             }
             
             if (processedCount > 0) {
-                alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento de tus archivos.`);
+                alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento.`);
             } else {
                 alert("La IA ha revisado los archivos, pero no encontró texto útil, o el archivo estaba en blanco.");
             }
