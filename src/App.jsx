@@ -129,7 +129,8 @@ async function summarizeMaterialWithOpenAI(openai, sourceText, label) {
   const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
 Analiza el siguiente material y devuelve una ficha útil para preparar examen.
 Incluye SOLO información que aparezca en el material: vocabulario, frases bilingües, verbos en presente, estructuras, gramática, errores habituales y ejemplos.
-Prioriza frases útiles árabe-español / español-árabe.
+Conserva literalmente todas las frases árabe-español / español-árabe que detectes.
+Incluye una sección llamada "FRASES BASE PARA EXAMEN" con pares de traducción cuando existan.
 No inventes contenido que no esté en el material.
 
 FUENTE: ${label}
@@ -159,16 +160,56 @@ function extractJsonArray(rawContent) {
 
 function normalizeGeneratedQuestion(question, index) {
   const safeQuestion = question && typeof question === 'object' ? question : {};
-  const opciones = Array.isArray(safeQuestion.opciones) ? safeQuestion.opciones.filter(Boolean).slice(0, 4) : [];
+  const rawOpciones = Array.isArray(safeQuestion.opciones)
+    ? safeQuestion.opciones
+    : Array.isArray(safeQuestion.options)
+      ? safeQuestion.options
+      : [];
+  const opciones = rawOpciones.map(opt => String(opt || '').trim()).filter(Boolean).slice(0, 4);
+  let correcta = Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : Number(safeQuestion.correcta);
+  if (!Number.isInteger(correcta) || correcta < 0 || correcta >= opciones.length) correcta = 0;
   return {
-    tipo: safeQuestion.tipo || 'traduccion',
-    direccion: safeQuestion.direccion || 'ar-es',
-    pregunta: safeQuestion.pregunta || `Pregunta ${index + 1}`,
+    tipo: safeQuestion.tipo || safeQuestion.type || 'traduccion',
+    direccion: safeQuestion.direccion || safeQuestion.direction || (index % 2 === 0 ? 'ar-es' : 'es-ar'),
+    pregunta: safeQuestion.pregunta || safeQuestion.question || `Pregunta ${index + 1}`,
     opciones: opciones.length >= 3 ? opciones : ['Opción A', 'Opción B', 'Opción C'],
-    correcta: Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : 0,
-    explicacion: safeQuestion.explicacion || 'Respuesta basada en el material subido.',
-    fuente: safeQuestion.fuente || 'Material subido'
+    correcta,
+    explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en el material subido.',
+    fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
   };
+}
+
+function findFirstQuestionArray(value) {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== 'object') return [];
+
+  const preferredKeys = ['preguntas', 'questions', 'test', 'items', 'simulacro', 'exam'];
+  for (const key of preferredKeys) {
+    if (Array.isArray(value[key])) return value[key];
+  }
+
+  for (const nested of Object.values(value)) {
+    const found = findFirstQuestionArray(nested);
+    if (found.length > 0) return found;
+  }
+
+  return [];
+}
+
+function parseGeneratedQuestions(rawContent) {
+  const raw = (rawContent || '').trim();
+  if (!raw) throw new Error('La IA devolvió una respuesta vacía.');
+
+  try {
+    const parsed = JSON.parse(raw);
+    return findFirstQuestionArray(parsed);
+  } catch (firstError) {
+    try {
+      return extractJsonArray(raw);
+    } catch (secondError) {
+      throw new Error(`La IA no devolvió JSON de preguntas válido. Respuesta inicial: ${raw.slice(0, 300)}`);
+    }
+  }
 }
 
 
@@ -406,7 +447,8 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
             const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
 Analiza este material y extrae SOLO información útil para examen que esté literalmente apoyada en el texto.
-Prioriza frases árabe-español / español-árabe, vocabulario y verbos en presente.
+Prioriza y conserva frases árabe-español / español-árabe, vocabulario y verbos en presente.
+Incluye una sección llamada "FRASES BASE PARA EXAMEN" con pares de traducción cuando existan.
 No inventes frases ni tiempos verbales que no aparezcan o no puedan deducirse directamente del material.
 
 MATERIAL:
@@ -537,48 +579,50 @@ ${textInput}`;
 Genera un simulacro de examen usando EXCLUSIVAMENTE la base de conocimiento subida por el usuario.
 
 REGLAS OBLIGATORIAS:
-1. Crea exactamente 10 preguntas.
-2. Todas las preguntas deben basarse en frases del material subido, no en conocimiento general.
+1. Crea exactamente 10 preguntas dentro de la propiedad "preguntas".
+2. Todas las preguntas deben nacer del material subido: frases, vocabulario, estructuras o ejemplos que aparezcan en la base.
 3. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
-4. Alterna traducción árabe → español y español → árabe.
+4. Alterna traducción árabe → español y español → árabe: pregunta 1 ar-es, pregunta 2 es-ar, y así sucesivamente.
 5. Cada pregunta debe ser una frase completa, no palabras sueltas.
-6. Incluye 3 opciones por pregunta. Solo una opción es correcta.
-7. Las opciones incorrectas deben ser verosímiles, pero no deben introducir gramática fuera del nivel A2.
+6. Incluye exactamente 3 opciones por pregunta. Solo una opción es correcta.
+7. Las opciones incorrectas deben ser verosímiles y de nivel A2.
 8. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
-9. Si el material no permite crear 10 preguntas fiables, crea las posibles y marca en la explicación "material insuficiente", sin inventar contenido externo.
-10. Responde SOLO con JSON válido, sin markdown.
+9. Si faltan frases completas en el material, construye frases simples en presente usando SOLO vocabulario y estructuras del material. Marca la explicación como "frase construida con material insuficiente".
+10. No devuelvas texto fuera del JSON.
 
-Formato exacto:
-[
-  {
-    "tipo": "traduccion",
-    "direccion": "ar-es",
-    "pregunta": "Traduce al español: ...",
-    "opciones": ["...", "...", "..."],
-    "correcta": 0,
-    "explicacion": "...",
-    "fuente": "..."
-  }
-]
+Formato obligatorio de salida:
+{
+  "preguntas": [
+    {
+      "tipo": "traduccion",
+      "direccion": "ar-es",
+      "pregunta": "Traduce al español: ...",
+      "opciones": ["...", "...", "..."],
+      "correcta": 0,
+      "explicacion": "...",
+      "fuente": "..."
+    }
+  ]
+}
 
 BASE DE CONOCIMIENTO SUBIDA:
 ${context}`;
             const res = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: [{ role: "user", content: prompt }],
-                temperature: 0.2,
+                temperature: 0.15,
                 response_format: { type: "json_object" }
             });
-            const raw = res.choices[0].message.content || "";
-            let parsed;
-            try {
-                const obj = JSON.parse(raw);
-                parsed = Array.isArray(obj) ? obj : (obj.preguntas || obj.questions || obj.test || []);
-            } catch {
-                parsed = extractJsonArray(raw);
+            const raw = res.choices?.[0]?.message?.content || "";
+            const parsed = parseGeneratedQuestions(raw);
+            const normalized = parsed
+                .map(normalizeGeneratedQuestion)
+                .filter(q => q.pregunta && Array.isArray(q.opciones) && q.opciones.length >= 3)
+                .slice(0, 10);
+            if (normalized.length === 0) {
+                console.error('Respuesta IA sin preguntas utilizables:', raw);
+                throw new Error('No se pudieron generar preguntas con el material subido. Revisa que el material guardado tenga frases o vocabulario legible.');
             }
-            const normalized = parsed.map(normalizeGeneratedQuestion).slice(0, 10);
-            if (normalized.length === 0) throw new Error('No se pudieron generar preguntas con el material subido.');
             setTest(normalized);
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
