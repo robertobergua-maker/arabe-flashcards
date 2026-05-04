@@ -259,7 +259,6 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     };
 
     // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
-// 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
     const handleKnowledgeFile = async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
@@ -272,7 +271,8 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         setIsProcessing(true);
         let processedCount = 0;
         let fileIndex = 0;
-        let lastAiResponse = ""; // <-- NUEVO: Guardaremos la respuesta de la IA aquí
+        let lastAiResponse = "";
+        let dbErrorMsg = ""; // <-- NUEVO: Para cazar el error de Supabase
 
         try {
             const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
@@ -300,7 +300,6 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
                         const base64Image = canvas.toDataURL('image/jpeg', 0.8);
 
-                        // PROMPT A PRUEBA DE BOMBAS
                         const prompt = `Eres un asistente experto. Lee esta imagen. Transcribe TODO el texto, vocabulario y explicaciones (en árabe y español) que veas. Cero excusas. Si la imagen que recibes es un cuadrado completamente en blanco, gris o negro liso sin letras, responde EXACTAMENTE con la palabra: "LIENZO_EN_BLANCO". En cualquier otro caso, escribe todo el texto que veas.`;
                         
                         const res = await openai.chat.completions.create({
@@ -309,11 +308,19 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         });
 
                         const resultText = res.choices[0].message.content.trim();
-                        lastAiResponse = resultText; // Guardamos lo que dijo para el chivato
+                        lastAiResponse = resultText;
                         
                         if (!resultText.includes("LIENZO_EN_BLANCO")) {
-                            const { data } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
-                            if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
+                            // AQUÍ CAZAMOS EL ERROR DE SUPABASE
+                            const { data, error } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
+                            
+                            if (error) {
+                                dbErrorMsg = error.message; // Guardamos el error de la base de datos
+                                console.error("Error de Supabase:", error);
+                            } else if (data) { 
+                                setKnowledge(prev => [...prev, data[0]]); 
+                                processedCount++; 
+                            }
                         }
                     }
                 } else if (file.type.startsWith('image/')) {
@@ -335,17 +342,27 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                     lastAiResponse = resultText;
                     
                     if (!resultText.includes("LIENZO_EN_BLANCO")) {
-                        const { data } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: resultText }]).select();
-                        if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
+                        // AQUÍ CAZAMOS EL ERROR DE SUPABASE
+                        const { data, error } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: resultText }]).select();
+                        
+                        if (error) {
+                            dbErrorMsg = error.message;
+                            console.error("Error de Supabase:", error);
+                        } else if (data) { 
+                            setKnowledge(prev => [...prev, data[0]]); 
+                            processedCount++; 
+                        }
                     }
                 }
             }
             
             if (processedCount > 0) {
                 alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento.`);
+            } else if (dbErrorMsg) {
+                // Alerta si la IA leyó bien pero Supabase rechazó guardarlo
+                alert(`¡Ojo! La IA extrajo el texto perfectamente, pero tu base de datos Supabase bloqueó el guardado.\n\nError de Supabase: "${dbErrorMsg}"\n\nRevisa si tienes el RLS activado en la tabla exam_knowledge o si creaste la tabla correctamente.`);
             } else {
-                // EL CHIVATO: Te mostrará la respuesta literal de ChatGPT
-                alert(`¡Atención! No se guardó nada. Esto es EXACTAMENTE lo que respondió la IA al ver tu archivo:\n\n"${lastAiResponse}"`);
+                alert(`La IA no vio texto en el archivo. Respondió:\n\n"${lastAiResponse}"`);
             }
 
         } catch (err) {
