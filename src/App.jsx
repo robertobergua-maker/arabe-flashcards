@@ -288,7 +288,8 @@ function ExamPrepHub({ onBack, apiKey, isAdmin }) {
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
                         const base64Image = canvas.toDataURL('image/jpeg');
 
-                        const prompt = `Actúa como un profesor de Árabe nivel A2. Lee esta imagen extraída de un libro de texto escaneado en PDF. Extrae la teoría gramatical o el vocabulario útil. Si la página solo tiene ejercicios sin resolver, imágenes sin texto útil, o no hay teoría, responde SOLO con la palabra "NADA". Si hay información útil, haz un resumen estructurado en español.`;
+                        const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Tu objetivo es crear material de estudio para tu alumno. Extrae TODO el vocabulario en árabe (con su traducción), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. 
+SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibujos sin NINGÚN texto legible. Si hay cualquier texto en árabe o español, resúmelo y organízalo.`;
                         
                         const res = await openai.chat.completions.create({
                             model: "gpt-4o",
