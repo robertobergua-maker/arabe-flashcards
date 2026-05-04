@@ -310,7 +310,8 @@ SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibu
                         reader.readAsDataURL(file);
                     });
 
-                    const prompt = `Actúa como profesor de Árabe nivel A2. Analiza esta imagen de unos apuntes o libro de texto. Extrae ÚNICAMENTE información útil para preparar un examen (reglas gramaticales, vocabulario clave) y resúmelo de forma clara.`;
+                    const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Tu objetivo es crear material de estudio para tu alumno. Extrae TODO el vocabulario en árabe (con su traducción), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. 
+SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibujos sin NINGÚN texto legible. Si hay cualquier texto en árabe o español, resúmelo y organízalo.`;
                     
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
