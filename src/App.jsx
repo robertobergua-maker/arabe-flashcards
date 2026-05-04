@@ -128,7 +128,8 @@ Reglas:
 async function summarizeMaterialWithOpenAI(openai, sourceText, label) {
   const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
 Analiza el siguiente material y devuelve una ficha útil para preparar examen.
-Incluye, si aparecen: vocabulario, gramática, estructuras de frase, errores habituales y ejemplos.
+Incluye SOLO información que aparezca en el material: vocabulario, frases bilingües, verbos en presente, estructuras, gramática, errores habituales y ejemplos.
+Prioriza frases útiles árabe-español / español-árabe.
 No inventes contenido que no esté en el material.
 
 FUENTE: ${label}
@@ -137,10 +138,37 @@ ${sourceText}`;
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }]
+    messages: [{ role: "user", content: prompt }],
+    temperature: 0.1
   });
 
   return cleanExtractedText(response.choices?.[0]?.message?.content || sourceText);
+}
+
+function extractJsonArray(rawContent) {
+  const raw = (rawContent || "").trim();
+  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fencedMatch ? fencedMatch[1].trim() : raw;
+  const start = candidate.indexOf('[');
+  const end = candidate.lastIndexOf(']');
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error('La IA no devolvió una lista JSON válida.');
+  }
+  return JSON.parse(candidate.substring(start, end + 1));
+}
+
+function normalizeGeneratedQuestion(question, index) {
+  const safeQuestion = question && typeof question === 'object' ? question : {};
+  const opciones = Array.isArray(safeQuestion.opciones) ? safeQuestion.opciones.filter(Boolean).slice(0, 4) : [];
+  return {
+    tipo: safeQuestion.tipo || 'traduccion',
+    direccion: safeQuestion.direccion || 'ar-es',
+    pregunta: safeQuestion.pregunta || `Pregunta ${index + 1}`,
+    opciones: opciones.length >= 3 ? opciones : ['Opción A', 'Opción B', 'Opción C'],
+    correcta: Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : 0,
+    explicacion: safeQuestion.explicacion || 'Respuesta basada en el material subido.',
+    fuente: safeQuestion.fuente || 'Material subido'
+  };
 }
 
 
@@ -376,8 +404,14 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         setProgress({ current: 1, total: 1, text: "Analizando texto escrito..." });
         try {
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-            const prompt = `Actúa como profesor de Árabe nivel A2. Analiza este material. Extrae ÚNICAMENTE información útil para examen (reglas, vocabulario, formato) y resume en < 100 palabras. MATERIAL: ${textInput}`;
-            const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }] });
+            const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
+Analiza este material y extrae SOLO información útil para examen que esté literalmente apoyada en el texto.
+Prioriza frases árabe-español / español-árabe, vocabulario y verbos en presente.
+No inventes frases ni tiempos verbales que no aparezcan o no puedan deducirse directamente del material.
+
+MATERIAL:
+${textInput}`;
+            const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.1 });
             const { data } = await supabase.from('exam_knowledge').insert([{ category: 'Material EOI', content: res.choices[0].message.content }]).select();
             if (data) { setKnowledge([...knowledge, data[0]]); setTextInput(""); alert("¡Material procesado y memorizado!"); }
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); setProgress({ current: 0, total: 0, text: "" }); }
@@ -494,12 +528,58 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
         setIsProcessing(true);
         try {
-            const context = knowledge.map(k => k.content).join("\n");
+            const context = knowledge
+                .map(k => `FUENTE: ${k.category || 'Material subido'}\n${k.content}`)
+                .join("\n\n---\n\n")
+                .slice(0, 45000);
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-            const prompt = `Base de conocimiento de las clases del alumno:\n${context}\n\nGenera simulacro EOI nivel A2: 3 preguntas test (1 gramática, 2 vocab). Responde SOLO en JSON estricto: [{"pregunta": "txt", "opciones": ["a","b","c"], "correcta": 0, "explicacion": "txt"}].`;
-            const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }] });
-            const rawContent = res.choices[0].message.content.match(/\[.*\]/s);
-            if (rawContent) setTest(JSON.parse(rawContent[0]));
+            const prompt = `Eres profesor de Árabe nivel A2 de EOI.
+Genera un simulacro de examen usando EXCLUSIVAMENTE la base de conocimiento subida por el usuario.
+
+REGLAS OBLIGATORIAS:
+1. Crea exactamente 10 preguntas.
+2. Todas las preguntas deben basarse en frases del material subido, no en conocimiento general.
+3. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
+4. Alterna traducción árabe → español y español → árabe.
+5. Cada pregunta debe ser una frase completa, no palabras sueltas.
+6. Incluye 3 opciones por pregunta. Solo una opción es correcta.
+7. Las opciones incorrectas deben ser verosímiles, pero no deben introducir gramática fuera del nivel A2.
+8. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
+9. Si el material no permite crear 10 preguntas fiables, crea las posibles y marca en la explicación "material insuficiente", sin inventar contenido externo.
+10. Responde SOLO con JSON válido, sin markdown.
+
+Formato exacto:
+[
+  {
+    "tipo": "traduccion",
+    "direccion": "ar-es",
+    "pregunta": "Traduce al español: ...",
+    "opciones": ["...", "...", "..."],
+    "correcta": 0,
+    "explicacion": "...",
+    "fuente": "..."
+  }
+]
+
+BASE DE CONOCIMIENTO SUBIDA:
+${context}`;
+            const res = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: [{ role: "user", content: prompt }],
+                temperature: 0.2,
+                response_format: { type: "json_object" }
+            });
+            const raw = res.choices[0].message.content || "";
+            let parsed;
+            try {
+                const obj = JSON.parse(raw);
+                parsed = Array.isArray(obj) ? obj : (obj.preguntas || obj.questions || obj.test || []);
+            } catch {
+                parsed = extractJsonArray(raw);
+            }
+            const normalized = parsed.map(normalizeGeneratedQuestion).slice(0, 10);
+            if (normalized.length === 0) throw new Error('No se pudieron generar preguntas con el material subido.');
+            setTest(normalized);
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
@@ -611,13 +691,18 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                 {/* PESTAÑA 2: SIMULACRO */}
                 {activeTab === 'test' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up flex flex-col h-full">
-                        <button onClick={handleGenerateTest} disabled={isProcessing || knowledge.length === 0} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex justify-center items-center gap-2 text-lg mb-6 shadow-md">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <><PlayCircle className="w-6 h-6"/> Generar Test de Repaso</>}</button>
+                        <button onClick={handleGenerateTest} disabled={isProcessing || knowledge.length === 0} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex justify-center items-center gap-2 text-lg mb-3 shadow-md">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <><PlayCircle className="w-6 h-6"/> Generar 10 preguntas del material subido</>}</button>
+                        <p className="text-xs text-slate-500 mb-6 text-center">El simulacro usa solo el material memorizado, frases árabe↔español y verbos en presente.</p>
                         <div className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200">
                             {!test ? <div className="text-center text-slate-400 py-10">Genera un test para empezar.</div> : (
                                 <div className="space-y-6">{test.map((q, i) => (
                                     <div key={i} className="bg-white p-4 rounded-lg shadow-sm border border-indigo-100">
-                                        <p className="font-bold text-slate-800 mb-3">{i+1}. {q.pregunta}</p>
-                                        <div className="grid grid-cols-1 gap-2">{q.opciones.map((op, idx) => ( <button key={idx} onClick={() => alert(idx === q.correcta ? `¡Correcto! ${q.explicacion}` : "Incorrecto.")} className="text-left p-3 border border-slate-200 rounded hover:bg-indigo-50 hover:border-indigo-300 text-sm font-medium">{op}</button> ))}</div>
+                                        <div className="flex items-start justify-between gap-3 mb-3">
+                                            <p className="font-bold text-slate-800">{i+1}. {q.pregunta}</p>
+                                            <span className="shrink-0 text-[10px] uppercase font-bold px-2 py-1 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">{q.direccion === 'es-ar' ? 'ES → AR' : 'AR → ES'}</span>
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-2">{q.opciones.map((op, idx) => ( <button key={idx} onClick={() => alert(idx === q.correcta ? `¡Correcto! ${q.explicacion}` : `Incorrecto. ${q.explicacion || ''}`)} className={`text-left p-3 border border-slate-200 rounded hover:bg-indigo-50 hover:border-indigo-300 text-sm font-medium ${/[؀-ۿ]/.test(op) ? 'font-arabic text-lg text-right' : ''}`} dir={/[؀-ۿ]/.test(op) ? 'rtl' : 'ltr'}>{op}</button> ))}</div>
+                                        {q.fuente && <p className="mt-3 text-[11px] text-slate-400 font-medium">Fuente: {q.fuente}</p>}
                                     </div>
                                 ))}</div>
                             )}
