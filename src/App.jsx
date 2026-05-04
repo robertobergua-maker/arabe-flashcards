@@ -231,7 +231,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     const [activeTab, setActiveTab] = useState('knowledge');
     const [knowledge, setKnowledge] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
-    const [progress, setProgress] = useState({ current: 0, total: 0, text: "" }); // <-- ESTADO DE PROGRESO
+    const [progress, setProgress] = useState({ current: 0, total: 0, text: "" });
     const [textInput, setTextInput] = useState("");
     const [test, setTest] = useState(null);
     const [correctionResult, setCorrectionResult] = useState("");
@@ -283,7 +283,6 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                     const pdf = await pdfjsLib.getDocument(ab).promise;
                     
                     for(let i=1; i<=pdf.numPages; i++) {
-                        // Actualizar la barra de progreso
                         setProgress({ current: i, total: pdf.numPages, text: `IA leyendo página ${i} de ${pdf.numPages} (${file.name})...` });
                         
                         const page = await pdf.getPage(i);
@@ -296,8 +295,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         await page.render({ canvasContext: context, viewport: viewport }).promise;
                         const base64Image = canvas.toDataURL('image/jpeg');
 
-                        // PROMPT RELAJADO PARA QUE NO IGNORE LOS CÓMICS
-                        const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Tu objetivo es crear material de estudio. Extrae TODO el vocabulario en árabe (con su traducción al español), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. SOLO debes responder "NADA" si la página está 100% en blanco o solo tiene dibujos sin NINGÚN texto legible. Si hay cualquier texto útil, resúmelo y organízalo.`;
+                        const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Extrae TODO el vocabulario en árabe (con su traducción al español), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. Responde SOLO con la palabra "NADA" si y solo si la imagen está 100% en blanco o es un dibujo sin un solo texto. En cualquier otro caso, extrae lo que veas.`;
                         
                         const res = await openai.chat.completions.create({
                             model: "gpt-4o",
@@ -319,8 +317,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         reader.readAsDataURL(file);
                     });
 
-                    // PROMPT RELAJADO PARA IMÁGENES SUELTAS
-                    const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Extrae TODO el vocabulario en árabe (con su traducción), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. SOLO responde "NADA" si la imagen no tiene texto legible.`;
+                    const prompt = `Actúa como un profesor de Árabe nivel A2. Estás leyendo una página de un libro de texto. Extrae TODO el vocabulario en árabe (con su traducción al español), frases útiles y cualquier concepto que veas, aunque esté dentro de un cómic o un ejercicio. Responde SOLO con la palabra "NADA" si y solo si la imagen está 100% en blanco o es un dibujo sin un solo texto. En cualquier otro caso, extrae lo que veas.`;
                     
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
@@ -338,7 +335,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
             if (processedCount > 0) {
                 alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento de tus archivos.`);
             } else {
-                alert("La IA ha revisado los archivos, pero la imagen estaba totalmente en blanco o ilegible.");
+                alert("La IA ha revisado los archivos, pero no encontró texto útil, o el archivo estaba en blanco.");
             }
 
         } catch (err) {
