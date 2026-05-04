@@ -162,7 +162,7 @@ export default function App() {
   }, [cards, searchTerm, selectedCategory]);
 
   if (currentView === 'welcome') return <WelcomeScreen onStartFlashcards={goToFlashcards} onStartExam={goToExam} />;
-  if (currentView === 'exam') return <ExamPrepHub onBack={goToWelcome} apiKey={localStorage.getItem('openai_key')} />;
+  if (currentView === 'exam') return <ExamPrepHub onBack={goToWelcome} apiKey={localStorage.getItem('openai_key')} isAdmin={isAdminMode} />;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
@@ -227,7 +227,8 @@ export default function App() {
 
 // --- TUTOR IA (EXAMEN 1A2) ---
 // --- TUTOR IA (EXAMEN 1A2) ---
-function ExamPrepHub({ onBack, apiKey }) {
+// --- TUTOR IA (EXAMEN 1A2) ---
+function ExamPrepHub({ onBack, apiKey, isAdmin }) {
     const [activeTab, setActiveTab] = useState('knowledge');
     const [knowledge, setKnowledge] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -274,13 +275,12 @@ function ExamPrepHub({ onBack, apiKey }) {
 
             for (const file of files) {
                 if (file.type.includes('pdf')) {
-                    // Convertir el PDF a imágenes (página a página) para la IA
                     const ab = await file.arrayBuffer();
                     const pdf = await pdfjsLib.getDocument(ab).promise;
                     
                     for(let i=1; i<=pdf.numPages; i++) {
                         const page = await pdf.getPage(i);
-                        const viewport = page.getViewport({ scale: 2.0 }); // Alta resolución para que lea bien los diacríticos árabes
+                        const viewport = page.getViewport({ scale: 2.0 });
                         const canvas = document.createElement('canvas');
                         const context = canvas.getContext('2d');
                         canvas.height = viewport.height;
@@ -298,14 +298,12 @@ function ExamPrepHub({ onBack, apiKey }) {
 
                         const resultText = res.choices[0].message.content.trim();
                         
-                        // Si la IA no responde "NADA", lo guardamos en la base de datos
                         if (resultText !== "NADA" && !resultText.includes("NADA")) {
                             const { data } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
                             if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
                         }
                     }
                 } else if (file.type.startsWith('image/')) {
-                    // Procesar Imagen normal
                     const base64 = await new Promise((resolve) => {
                         const reader = new FileReader();
                         reader.onload = () => resolve(reader.result);
@@ -334,7 +332,7 @@ function ExamPrepHub({ onBack, apiKey }) {
             alert("Error procesando archivos: " + err.message);
         } finally {
             setIsProcessing(false);
-            e.target.value = null; // Resetea el botón para subir más
+            e.target.value = null; 
         }
     };
 
@@ -385,26 +383,40 @@ function ExamPrepHub({ onBack, apiKey }) {
                 {/* PESTAÑA 1: CONOCIMIENTO */}
                 {activeTab === 'knowledge' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
-                        <h2 className="text-xl font-bold text-indigo-800 mb-2">Alimentar a la IA</h2>
-                        <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA "leerá" las imágenes usando visión avanzada para extraer la gramática y el vocabulario útil.</p>
-                        
-                        <div className="mb-4">
-                            <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
-                                <input type="file" accept=".pdf,image/*" multiple className="hidden" onChange={handleKnowledgeFile} />
-                                {isProcessing ? (
-                                    <Loader className="w-8 h-8 mx-auto mb-2 animate-spin text-indigo-600"/>
-                                ) : (
-                                    <Upload className="w-8 h-8 mx-auto mb-2 opacity-80 text-indigo-600"/>
-                                )}
-                                <span className="text-sm font-bold block">{isProcessing ? "Analizando imágenes con IA (Puede tardar unos segundos por página)..." : "Haz clic aquí para seleccionar uno o VARIOS archivos"}</span>
-                            </label>
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-xl font-bold text-indigo-800">Alimentar a la IA</h2>
+                            {!isAdmin && <span className="bg-red-100 text-red-600 text-xs font-bold px-3 py-1 rounded-full uppercase flex items-center gap-1"><Lock className="w-3 h-3"/> Bloqueado</span>}
                         </div>
-
-                        <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si tienes texto puro, pégalo aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
                         
-                        <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
-                            {isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer Texto y Memorizar</>}
-                        </button>
+                        {isAdmin ? (
+                            <>
+                                <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA "leerá" las imágenes usando visión avanzada para extraer la gramática y el vocabulario útil.</p>
+                                
+                                <div className="mb-4">
+                                    <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
+                                        <input type="file" accept=".pdf,image/*" multiple className="hidden" onChange={handleKnowledgeFile} />
+                                        {isProcessing ? (
+                                            <Loader className="w-8 h-8 mx-auto mb-2 animate-spin text-indigo-600"/>
+                                        ) : (
+                                            <Upload className="w-8 h-8 mx-auto mb-2 opacity-80 text-indigo-600"/>
+                                        )}
+                                        <span className="text-sm font-bold block">{isProcessing ? "Analizando imágenes con IA (Puede tardar unos segundos por página)..." : "Haz clic aquí para seleccionar uno o VARIOS archivos"}</span>
+                                    </label>
+                                </div>
+
+                                <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si tienes texto puro, pégalo aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
+                                
+                                <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
+                                    {isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer Texto y Memorizar</>}
+                                </button>
+                            </>
+                        ) : (
+                            <div className="bg-slate-50 border border-slate-200 p-8 rounded-xl text-center text-slate-500">
+                                <Lock className="w-12 h-12 mx-auto mb-3 opacity-20" />
+                                <h3 className="font-bold text-lg mb-2 text-slate-700">Modo Estudiante</h3>
+                                <p className="text-sm">Solo el Administrador puede subir nuevo material de estudio.<br/>Activa el "Modo Admin" en la pantalla principal para desbloquear esta función.</p>
+                            </div>
+                        )}
                         
                         <div className="mt-6 pt-4 border-t border-slate-100 flex justify-between">
                             <span className="text-xs font-bold uppercase text-slate-400">Datos memorizados: {knowledge.length} bloques.</span>
@@ -450,7 +462,6 @@ function ExamPrepHub({ onBack, apiKey }) {
         </div>
     );
 }
-
 // (DEJA AQUÍ DEBAJO EL RESTO DE TUS FUNCIONES: AdvancedMaintenanceModal, TableEditor, etc... QUE YA TENÍAS)
 
 // --- PANEL DE MANTENIMIENTO AVANZADO ---
