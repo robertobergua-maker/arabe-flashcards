@@ -258,6 +258,124 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); setProgress({ current: 0, total: 0, text: "" }); }
     };
 
+    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
+    const handleKnowledgeFile = async (e) => {
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
+        
+        if (!apiKey) { 
+            alert("API Key OpenAI requerida para visión."); 
+            return; 
+        }
+
+        setIsProcessing(true);
+        let processedCount = 0;
+        let fileIndex = 0;
+        let lastAiResponse = "";
+        let dbErrorMsg = ""; // <-- NUEVO: Para cazar el error de Supabase
+
+        try {
+            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+
+            for (const file of files) {
+                fileIndex++;
+                if (file.type.includes('pdf')) {
+                    setProgress({ current: 0, total: 0, text: `Abriendo PDF ${fileIndex}/${files.length}: ${file.name}...` });
+                    const ab = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument(ab).promise;
+                    
+                    for(let i=1; i<=pdf.numPages; i++) {
+                        setProgress({ current: i, total: pdf.numPages, text: `IA leyendo página ${i} de ${pdf.numPages} (${file.name})...` });
+                        
+                        const page = await pdf.getPage(i);
+                        const viewport = page.getViewport({ scale: 1.0 }); 
+                        const canvas = document.createElement('canvas');
+                        const context = canvas.getContext('2d');
+                        canvas.height = viewport.height;
+                        canvas.width = viewport.width;
+                        
+                        context.fillStyle = '#ffffff';
+                        context.fillRect(0, 0, canvas.width, canvas.height);
+                        
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
+                        const base64Image = canvas.toDataURL('image/jpeg', 0.8);
+
+                        const prompt = `Eres un asistente experto. Lee esta imagen. Transcribe TODO el texto, vocabulario y explicaciones (en árabe y español) que veas. Cero excusas. Si la imagen que recibes es un cuadrado completamente en blanco, gris o negro liso sin letras, responde EXACTAMENTE con la palabra: "LIENZO_EN_BLANCO". En cualquier otro caso, escribe todo el texto que veas.`;
+                        
+                        const res = await openai.chat.completions.create({
+                            model: "gpt-4o",
+                            messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64Image } }] }]
+                        });
+
+                        const resultText = res.choices[0].message.content.trim();
+                        lastAiResponse = resultText;
+                        
+                        if (!resultText.includes("LIENZO_EN_BLANCO")) {
+                            // AQUÍ CAZAMOS EL ERROR DE SUPABASE
+                            const { data, error } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
+                            
+                            if (error) {
+                                dbErrorMsg = error.message; // Guardamos el error de la base de datos
+                                console.error("Error de Supabase:", error);
+                            } else if (data) { 
+                                setKnowledge(prev => [...prev, data[0]]); 
+                                processedCount++; 
+                            }
+                        }
+                    }
+                } else if (file.type.startsWith('image/')) {
+                    setProgress({ current: 1, total: 1, text: `Analizando imagen ${fileIndex}/${files.length}...` });
+                    const base64 = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.readAsDataURL(file);
+                    });
+
+                    const prompt = `Eres un asistente experto. Lee esta imagen. Transcribe TODO el texto, vocabulario y explicaciones (en árabe y español) que veas. Cero excusas. Si la imagen que recibes es un cuadrado completamente en blanco, gris o negro liso sin letras, responde EXACTAMENTE con la palabra: "LIENZO_EN_BLANCO". En cualquier otro caso, escribe todo el texto que veas.`;
+                    
+                    const res = await openai.chat.completions.create({
+                        model: "gpt-4o",
+                        messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64 } }] }]
+                    });
+
+                    const resultText = res.choices[0].message.content.trim();
+                    lastAiResponse = resultText;
+                    
+                    if (!resultText.includes("LIENZO_EN_BLANCO")) {
+                        // AQUÍ CAZAMOS EL ERROR DE SUPABASE
+                        const { data, error } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: resultText }]).select();
+                        
+                        if (error) {
+                            dbErrorMsg = error.message;
+                            console.error("Error de Supabase:", error);
+                        } else if (data) { 
+                            setKnowledge(prev => [...prev, data[0]]); 
+                            processedCount++; 
+                        }
+                    }
+                }
+            }
+            
+            if (processedCount > 0) {
+                alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento.`);
+            } else if (dbErrorMsg) {
+                // Alerta si la IA leyó bien pero Supabase rechazó guardarlo
+                alert(`¡Ojo! La IA extrajo el texto perfectamente, pero tu base de datos Supabase bloqueó el guardado.\n\nError de Supabase: "${dbErrorMsg}"\n\nRevisa si tienes el RLS activado en la tabla exam_knowledge o si creaste la tabla correctamente.`);
+            } else {
+                alert(`La IA no vio texto en el archivo. Respondió:\n\n"${lastAiResponse}"`);
+            }
+
+
+        } catch (err) {
+            alert("Error procesando archivos: " + err.message);
+            console.error("Detalle del error:", err);
+        } finally {
+            setIsProcessing(false);
+            setProgress({ current: 0, total: 0, text: "" });
+            e.target.value = null; 
+        }
+    };
+
     // 3. Generador de Simulacro (NIVEL AVANZADO)
     const handleGenerateTest = async () => {
         if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
@@ -294,20 +412,6 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         } finally { 
             setIsProcessing(false); 
         }
-    };
-
-    // 3. Generador de Simulacro
-    const handleGenerateTest = async () => {
-        if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
-        setIsProcessing(true);
-        try {
-            const context = knowledge.map(k => k.content).join("\n");
-            const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-            const prompt = `Base de conocimiento de las clases del alumno:\n${context}\n\nGenera simulacro EOI nivel A2: 3 preguntas test (1 gramática, 2 vocab). Responde SOLO en JSON estricto: [{"pregunta": "txt", "opciones": ["a","b","c"], "correcta": 0, "explicacion": "txt"}].`;
-            const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }] });
-            const rawContent = res.choices[0].message.content.match(/\[.*\]/s);
-            if (rawContent) setTest(JSON.parse(rawContent[0]));
-        } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
     // 4. Corregir examen escrito a mano (Cámara)
