@@ -236,12 +236,13 @@ function ExamPrepHub({ onBack, apiKey }) {
     const [correctionResult, setCorrectionResult] = useState("");
     const [uploadedImage, setUploadedImage] = useState(null);
 
+    // Cargar base de datos al inicio
     useEffect(() => {
         async function fetchKnowledge() { const { data } = await supabase.from('exam_knowledge').select('*'); if (data) setKnowledge(data); }
         fetchKnowledge();
     }, []);
 
-    // Procesar Texto o PDF extraído
+    // 1. Procesar Texto Libre o Texto de PDF
     const handleProcessMaterial = async () => {
         if (!textInput.trim()) return;
         if (!apiKey) { alert("API Key OpenAI requerida."); return; }
@@ -255,67 +256,92 @@ function ExamPrepHub({ onBack, apiKey }) {
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
-    // Novedad: Subir y procesar PDFs e Imágenes para Conocimiento
+    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs e Imágenes de Teoría)
     const handleKnowledgeFile = async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
+        const files = Array.from(e.target.files);
+        if (files.length === 0) return;
         
-        if (file.type.includes('pdf')) {
-            setIsProcessing(true);
-            try {
-                const ab = await file.arrayBuffer();
-                const pdf = await pdfjsLib.getDocument(ab).promise;
-                let str = "";
-                for(let i=1; i<=pdf.numPages; i++) {
-                    const p = await pdf.getPage(i);
-                    const t = await p.getTextContent();
-                    str += t.items.map(s=>s.str).join(" ") + "\n";
-                }
-                setTextInput((prev) => prev + (prev ? "\n\n" : "") + str);
-                alert("PDF extraído al cuadro de texto. Revisa y dale a 'Extraer y Memorizar'.");
-            } catch(err) {
-                alert("Error leyendo PDF: " + err.message);
-            } finally {
-                setIsProcessing(false);
-            }
-        } else if (file.type.startsWith('image/')) {
-            if (!apiKey) { alert("API Key OpenAI requerida para visión."); return; }
-            setIsProcessing(true);
-            try {
-                const reader = new FileReader();
-                reader.onload = async () => {
-                    const base64 = reader.result;
+        // Comprobar si hay imágenes para pedir la API Key antes de empezar
+        const hasImages = files.some(f => f.type.startsWith('image/'));
+        if (hasImages && !apiKey) { 
+            alert("API Key OpenAI requerida para procesar las imágenes."); 
+            return; 
+        }
+
+        setIsProcessing(true);
+        let combinedPdfText = "";
+        let processedImagesCount = 0;
+
+        try {
+            for (const file of files) {
+                if (file.type.includes('pdf')) {
+                    // Extraer texto del PDF
+                    const ab = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument(ab).promise;
+                    let str = "";
+                    for(let i=1; i<=pdf.numPages; i++) {
+                        const p = await pdf.getPage(i);
+                        const t = await p.getTextContent();
+                        str += t.items.map(s=>s.str).join(" ") + "\n";
+                    }
+                    combinedPdfText += (combinedPdfText ? "\n\n" : "") + `--- Archivo: ${file.name} ---\n` + str;
+                    
+                } else if (file.type.startsWith('image/')) {
+                    // Procesar Imagen con IA
+                    const base64 = await new Promise((resolve) => {
+                        const reader = new FileReader();
+                        reader.onload = () => resolve(reader.result);
+                        reader.readAsDataURL(file);
+                    });
+
                     const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-                    const prompt = `Actúa como profesor de Árabe nivel A2. Analiza esta imagen. Extrae ÚNICAMENTE información útil para examen (reglas, vocabulario, formato) y resume en < 100 palabras.`;
+                    const prompt = `Actúa como profesor de Árabe nivel A2. Analiza esta imagen de unos apuntes o libro de texto. Extrae ÚNICAMENTE información útil para preparar un examen (reglas gramaticales, traducciones de vocabulario clave, ejemplos importantes) y haz un resumen estructurado en español en menos de 100 palabras.`;
+                    
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
                         messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64 } }] }]
                     });
-                    const { data } = await supabase.from('exam_knowledge').insert([{ category: 'Material EOI (Imagen)', content: res.choices[0].message.content }]).select();
-                    if (data) { setKnowledge(prev => [...prev, data[0]]); alert("¡Imagen analizada y conocimiento guardado!"); }
-                    setIsProcessing(false);
-                };
-                reader.readAsDataURL(file);
-            } catch (err) {
-                alert("Error procesando imagen: " + err.message);
-                setIsProcessing(false);
+
+                    const { data } = await supabase.from('exam_knowledge').insert([{ category: `Apunte: ${file.name}`, content: res.choices[0].message.content }]).select();
+                    if (data) { 
+                        setKnowledge(prev => [...prev, data[0]]); 
+                        processedImagesCount++;
+                    }
+                }
             }
+
+            // Avisos finales según lo que se haya subido
+            if (combinedPdfText) {
+                setTextInput((prev) => prev + (prev ? "\n\n" : "") + combinedPdfText);
+                alert("Textos de PDF(s) extraídos al cuadro de texto. Revisa y dale a 'Extraer y Memorizar'.");
+            }
+            if (processedImagesCount > 0) {
+                alert(`¡${processedImagesCount} imagen(es) analizada(s) y conocimiento guardado!`);
+            }
+
+        } catch (err) {
+            alert("Error procesando archivos: " + err.message);
+        } finally {
+            setIsProcessing(false);
+            e.target.value = null; // Resetea el input para poder subir los mismos archivos de nuevo si se equivocó
         }
     };
 
+    // 3. Generador de Simulacro
     const handleGenerateTest = async () => {
         if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
         setIsProcessing(true);
         try {
             const context = knowledge.map(k => k.content).join("\n");
             const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
-            const prompt = `Base de conocimiento:\n${context}\n\nGenera simulacro EOI nivel A2: 3 preguntas test (1 gramática, 2 vocab). Responde SOLO en JSON estricto: [{"pregunta": "txt", "opciones": ["a","b","c"], "correcta": 0, "explicacion": "txt"}].`;
+            const prompt = `Base de conocimiento de las clases del alumno:\n${context}\n\nGenera simulacro EOI nivel A2: 3 preguntas test (1 gramática, 2 vocab). Responde SOLO en JSON estricto: [{"pregunta": "txt", "opciones": ["a","b","c"], "correcta": 0, "explicacion": "txt"}].`;
             const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: prompt }] });
             const rawContent = res.choices[0].message.content.match(/\[.*\]/s);
             if (rawContent) setTest(JSON.parse(rawContent[0]));
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
+    // 4. Corregir examen escrito a mano (Cámara)
     const handleCorrectExam = async (base64Image) => {
         if (!apiKey) { alert("API Key OpenAI requerida para visión."); return; }
         setIsProcessing(true); setUploadedImage(base64Image); setCorrectionResult("");
@@ -330,7 +356,7 @@ function ExamPrepHub({ onBack, apiKey }) {
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
-    const handleFileUpload = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => handleCorrectExam(reader.result); reader.readAsDataURL(file); };
+    const handleCameraUpload = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => handleCorrectExam(reader.result); reader.readAsDataURL(file); };
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -342,34 +368,35 @@ function ExamPrepHub({ onBack, apiKey }) {
                 <button onClick={() => setActiveTab('test')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'test' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Activity className="w-5 h-5"/> 2. Simulacro</button>
                 <button onClick={() => setActiveTab('camera')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'camera' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Camera className="w-5 h-5"/> 3. Corregir a Mano</button>
             </div>
+            
             <div className="flex-1 p-6 max-w-4xl mx-auto w-full">
                 
                 {/* PESTAÑA 1: CONOCIMIENTO */}
                 {activeTab === 'knowledge' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
                         <h2 className="text-xl font-bold text-indigo-800 mb-2">Alimentar a la IA</h2>
-                        <p className="text-sm text-slate-500 mb-4">Sube un PDF, foto o pega tus apuntes. La IA los asimilará para usarlos en tus exámenes.</p>
+                        <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra, PDFs de clase o pega apuntes. Puedes seleccionar varios archivos a la vez.</p>
                         
-                        {/* Nuevo Botón de Subida */}
                         <div className="mb-4">
                             <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
-                                <input type="file" accept=".pdf,image/*" className="hidden" onChange={handleKnowledgeFile} />
+                                {/* AQUÍ HEMOS AÑADIDO EL ATRIBUTO "multiple" */}
+                                <input type="file" accept=".pdf,image/*" multiple className="hidden" onChange={handleKnowledgeFile} />
                                 {isProcessing ? (
                                     <Loader className="w-8 h-8 mx-auto mb-2 animate-spin text-indigo-600"/>
                                 ) : (
                                     <Upload className="w-8 h-8 mx-auto mb-2 opacity-80 text-indigo-600"/>
                                 )}
-                                <span className="text-sm font-bold block">{isProcessing ? "Analizando archivo..." : "Haz clic aquí para subir tu PDF o Imagen de apuntes"}</span>
+                                <span className="text-sm font-bold block">{isProcessing ? "Analizando archivos con IA..." : "Haz clic aquí para seleccionar uno o VARIOS archivos"}</span>
                             </label>
                         </div>
 
-                        <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm" placeholder="O si lo prefieres, pega la teoría o el vocabulario en texto aquí..." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
+                        <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si lo prefieres, pega el texto manualmente aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
                         
                         <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
                             {isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer Texto y Memorizar</>}
                         </button>
                         
-                        <div className="mt-6 pt-4 border-t border-slate-100">
+                        <div className="mt-6 pt-4 border-t border-slate-100 flex justify-between">
                             <span className="text-xs font-bold uppercase text-slate-400">Datos memorizados: {knowledge.length} bloques.</span>
                         </div>
                     </div>
@@ -398,7 +425,7 @@ function ExamPrepHub({ onBack, apiKey }) {
                         <h2 className="text-xl font-bold text-indigo-800 mb-2">Corrector de Caligrafía y Gramática</h2>
                         <p className="text-sm text-slate-500 mb-6">Hazle una foto a tu examen a mano para corregirlo.</p>
                         <div className="relative border-2 border-dashed border-indigo-300 bg-indigo-50 rounded-2xl p-8 text-center hover:bg-indigo-100 cursor-pointer">
-                            <input type="file" accept="image/*" capture="environment" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                            <input type="file" accept="image/*" capture="environment" onChange={handleCameraUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
                             {isProcessing ? <div className="flex flex-col items-center text-indigo-600"><Loader className="w-10 h-10 animate-spin mb-2"/><span className="font-bold">Analizando caligrafía...</span></div> : <div className="flex flex-col items-center text-indigo-600"><Upload className="w-12 h-12 mb-3 opacity-80"/><span className="font-bold text-lg">Haz foto o sube archivo</span></div>}
                         </div>
                         {uploadedImage && !isProcessing && (
