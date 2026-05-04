@@ -226,6 +226,7 @@ export default function App() {
 }
 
 // --- TUTOR IA (EXAMEN 1A2) ---
+// --- TUTOR IA (EXAMEN 1A2) ---
 function ExamPrepHub({ onBack, apiKey }) {
     const [activeTab, setActiveTab] = useState('knowledge');
     const [knowledge, setKnowledge] = useState([]);
@@ -240,6 +241,7 @@ function ExamPrepHub({ onBack, apiKey }) {
         fetchKnowledge();
     }, []);
 
+    // Procesar Texto o PDF extraído
     const handleProcessMaterial = async () => {
         if (!textInput.trim()) return;
         if (!apiKey) { alert("API Key OpenAI requerida."); return; }
@@ -249,8 +251,56 @@ function ExamPrepHub({ onBack, apiKey }) {
             const prompt = `Actúa como profesor de Árabe nivel A2. Analiza este material. Extrae ÚNICAMENTE información útil para examen (reglas, vocabulario, formato) y resume en < 100 palabras. MATERIAL: ${textInput}`;
             const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }] });
             const { data } = await supabase.from('exam_knowledge').insert([{ category: 'Material EOI', content: res.choices[0].message.content }]).select();
-            if (data) { setKnowledge([...knowledge, data[0]]); setTextInput(""); alert("¡Material procesado!"); }
+            if (data) { setKnowledge([...knowledge, data[0]]); setTextInput(""); alert("¡Material procesado y memorizado!"); }
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
+    };
+
+    // Novedad: Subir y procesar PDFs e Imágenes para Conocimiento
+    const handleKnowledgeFile = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        
+        if (file.type.includes('pdf')) {
+            setIsProcessing(true);
+            try {
+                const ab = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument(ab).promise;
+                let str = "";
+                for(let i=1; i<=pdf.numPages; i++) {
+                    const p = await pdf.getPage(i);
+                    const t = await p.getTextContent();
+                    str += t.items.map(s=>s.str).join(" ") + "\n";
+                }
+                setTextInput((prev) => prev + (prev ? "\n\n" : "") + str);
+                alert("PDF extraído al cuadro de texto. Revisa y dale a 'Extraer y Memorizar'.");
+            } catch(err) {
+                alert("Error leyendo PDF: " + err.message);
+            } finally {
+                setIsProcessing(false);
+            }
+        } else if (file.type.startsWith('image/')) {
+            if (!apiKey) { alert("API Key OpenAI requerida para visión."); return; }
+            setIsProcessing(true);
+            try {
+                const reader = new FileReader();
+                reader.onload = async () => {
+                    const base64 = reader.result;
+                    const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
+                    const prompt = `Actúa como profesor de Árabe nivel A2. Analiza esta imagen. Extrae ÚNICAMENTE información útil para examen (reglas, vocabulario, formato) y resume en < 100 palabras.`;
+                    const res = await openai.chat.completions.create({
+                        model: "gpt-4o",
+                        messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64 } }] }]
+                    });
+                    const { data } = await supabase.from('exam_knowledge').insert([{ category: 'Material EOI (Imagen)', content: res.choices[0].message.content }]).select();
+                    if (data) { setKnowledge(prev => [...prev, data[0]]); alert("¡Imagen analizada y conocimiento guardado!"); }
+                    setIsProcessing(false);
+                };
+                reader.readAsDataURL(file);
+            } catch (err) {
+                alert("Error procesando imagen: " + err.message);
+                setIsProcessing(false);
+            }
+        }
     };
 
     const handleGenerateTest = async () => {
@@ -293,15 +343,39 @@ function ExamPrepHub({ onBack, apiKey }) {
                 <button onClick={() => setActiveTab('camera')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'camera' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Camera className="w-5 h-5"/> 3. Corregir a Mano</button>
             </div>
             <div className="flex-1 p-6 max-w-4xl mx-auto w-full">
+                
+                {/* PESTAÑA 1: CONOCIMIENTO */}
                 {activeTab === 'knowledge' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
                         <h2 className="text-xl font-bold text-indigo-800 mb-2">Alimentar a la IA</h2>
-                        <p className="text-sm text-slate-500 mb-4">Pega tus apuntes. La IA los resume y usa para evaluarte.</p>
-                        <textarea className="w-full h-40 p-3 border border-slate-300 rounded-xl mb-4 text-sm" placeholder="Teoría, vocabulario..." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
-                        <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">{isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer y Memorizar</>}</button>
-                        <div className="mt-6 pt-4 border-t border-slate-100"><span className="text-xs font-bold uppercase text-slate-400">Datos memorizados: {knowledge.length} bloques.</span></div>
+                        <p className="text-sm text-slate-500 mb-4">Sube un PDF, foto o pega tus apuntes. La IA los asimilará para usarlos en tus exámenes.</p>
+                        
+                        {/* Nuevo Botón de Subida */}
+                        <div className="mb-4">
+                            <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
+                                <input type="file" accept=".pdf,image/*" className="hidden" onChange={handleKnowledgeFile} />
+                                {isProcessing ? (
+                                    <Loader className="w-8 h-8 mx-auto mb-2 animate-spin text-indigo-600"/>
+                                ) : (
+                                    <Upload className="w-8 h-8 mx-auto mb-2 opacity-80 text-indigo-600"/>
+                                )}
+                                <span className="text-sm font-bold block">{isProcessing ? "Analizando archivo..." : "Haz clic aquí para subir tu PDF o Imagen de apuntes"}</span>
+                            </label>
+                        </div>
+
+                        <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm" placeholder="O si lo prefieres, pega la teoría o el vocabulario en texto aquí..." value={textInput} onChange={(e) => setTextInput(e.target.value)} />
+                        
+                        <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
+                            {isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer Texto y Memorizar</>}
+                        </button>
+                        
+                        <div className="mt-6 pt-4 border-t border-slate-100">
+                            <span className="text-xs font-bold uppercase text-slate-400">Datos memorizados: {knowledge.length} bloques.</span>
+                        </div>
                     </div>
                 )}
+                
+                {/* PESTAÑA 2: SIMULACRO */}
                 {activeTab === 'test' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up flex flex-col h-full">
                         <button onClick={handleGenerateTest} disabled={isProcessing || knowledge.length === 0} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex justify-center items-center gap-2 text-lg mb-6 shadow-md">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <><PlayCircle className="w-6 h-6"/> Generar Test de Repaso</>}</button>
@@ -317,6 +391,8 @@ function ExamPrepHub({ onBack, apiKey }) {
                         </div>
                     </div>
                 )}
+                
+                {/* PESTAÑA 3: CÁMARA */}
                 {activeTab === 'camera' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
                         <h2 className="text-xl font-bold text-indigo-800 mb-2">Corrector de Caligrafía y Gramática</h2>
@@ -337,6 +413,8 @@ function ExamPrepHub({ onBack, apiKey }) {
         </div>
     );
 }
+
+// (DEJA AQUÍ DEBAJO EL RESTO DE TUS FUNCIONES: AdvancedMaintenanceModal, TableEditor, etc... QUE YA TENÍAS)
 
 // --- PANEL DE MANTENIMIENTO AVANZADO ---
 function AdvancedMaintenanceModal({ onClose, cards, setCards, refreshCards }) {
