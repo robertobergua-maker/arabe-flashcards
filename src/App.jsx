@@ -365,6 +365,7 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                 alert(`La IA no vio texto en el archivo. Respondió:\n\n"${lastAiResponse}"`);
             }
 
+
         } catch (err) {
             alert("Error procesando archivos: " + err.message);
             console.error("Detalle del error:", err);
