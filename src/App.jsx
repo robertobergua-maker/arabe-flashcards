@@ -259,19 +259,20 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     };
 
     // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
-    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
+// 2. Procesar Archivos Subidos MÚLTIPLES (PDFs con Visión e Imágenes)
     const handleKnowledgeFile = async (e) => {
         const files = Array.from(e.target.files);
         if (files.length === 0) return;
         
         if (!apiKey) { 
-            alert("API Key OpenAI requerida. Necesitamos la IA para 'ver' y leer los PDFs escaneados y las imágenes."); 
+            alert("API Key OpenAI requerida para visión."); 
             return; 
         }
 
         setIsProcessing(true);
         let processedCount = 0;
         let fileIndex = 0;
+        let lastAiResponse = ""; // <-- NUEVO: Guardaremos la respuesta de la IA aquí
 
         try {
             const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true });
@@ -281,15 +282,12 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                 if (file.type.includes('pdf')) {
                     setProgress({ current: 0, total: 0, text: `Abriendo PDF ${fileIndex}/${files.length}: ${file.name}...` });
                     const ab = await file.arrayBuffer();
-                    
-                    // Cargamos el documento PDF
                     const pdf = await pdfjsLib.getDocument(ab).promise;
                     
                     for(let i=1; i<=pdf.numPages; i++) {
                         setProgress({ current: i, total: pdf.numPages, text: `IA leyendo página ${i} de ${pdf.numPages} (${file.name})...` });
                         
                         const page = await pdf.getPage(i);
-                        // BAJAMOS LA ESCALA A 1.0 PARA EVITAR QUE EL NAVEGADOR COLAPSE Y DIBUJE EN BLANCO
                         const viewport = page.getViewport({ scale: 1.0 }); 
                         const canvas = document.createElement('canvas');
                         const context = canvas.getContext('2d');
@@ -299,18 +297,11 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         context.fillStyle = '#ffffff';
                         context.fillRect(0, 0, canvas.width, canvas.height);
                         
-                        // Esperamos pacientemente a que se dibuje de verdad
-                        const renderContext = { canvasContext: context, viewport: viewport };
-                        await page.render(renderContext).promise;
-                        
-                        // Comprimimos la imagen
+                        await page.render({ canvasContext: context, viewport: viewport }).promise;
                         const base64Image = canvas.toDataURL('image/jpeg', 0.8);
-                        
-                        // Chivato temporal: Imprime en la consola de tu navegador los primeros caracteres de la imagen generada. 
-                        // Si son todo 'A's o el texto es super corto, es que se generó en blanco.
-                        console.log(`Página ${i} convertida a imagen. Longitud: ${base64Image.length}`);
 
-                        const prompt = `Eres un profesor de árabe de la Escuela Oficial de Idiomas. En esta imagen hay una página de apuntes (puede haber cómics, tablas, ejercicios...). Extrae TODO el vocabulario árabe con su traducción al español y cualquier regla gramatical útil. Transcríbelo y resúmelo. Si de verdad crees que no hay NADA de texto en árabe o español (ni siquiera en los dibujos), responde SOLO con la palabra "IMAGEN_VACIA".`;
+                        // PROMPT A PRUEBA DE BOMBAS
+                        const prompt = `Eres un asistente experto. Lee esta imagen. Transcribe TODO el texto, vocabulario y explicaciones (en árabe y español) que veas. Cero excusas. Si la imagen que recibes es un cuadrado completamente en blanco, gris o negro liso sin letras, responde EXACTAMENTE con la palabra: "LIENZO_EN_BLANCO". En cualquier otro caso, escribe todo el texto que veas.`;
                         
                         const res = await openai.chat.completions.create({
                             model: "gpt-4o",
@@ -318,23 +309,22 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                         });
 
                         const resultText = res.choices[0].message.content.trim();
+                        lastAiResponse = resultText; // Guardamos lo que dijo para el chivato
                         
-                        if (!resultText.includes("IMAGEN_VACIA")) {
+                        if (!resultText.includes("LIENZO_EN_BLANCO")) {
                             const { data } = await supabase.from('exam_knowledge').insert([{ category: `PDF: ${file.name} (Pág ${i})`, content: resultText }]).select();
                             if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
-                        } else {
-                            console.log(`La IA devolvió IMAGEN_VACIA para la página ${i}`);
                         }
                     }
                 } else if (file.type.startsWith('image/')) {
-                    setProgress({ current: 1, total: 1, text: `Analizando imagen ${fileIndex}/${files.length}: ${file.name}...` });
+                    setProgress({ current: 1, total: 1, text: `Analizando imagen ${fileIndex}/${files.length}...` });
                     const base64 = await new Promise((resolve) => {
                         const reader = new FileReader();
                         reader.onload = () => resolve(reader.result);
                         reader.readAsDataURL(file);
                     });
 
-                    const prompt = `Eres un profesor de árabe de la Escuela Oficial de Idiomas. En esta imagen hay apuntes (puede haber cómics, tablas, ejercicios...). Extrae TODO el vocabulario árabe con su traducción al español y cualquier regla gramatical. Transcríbelo y resúmelo. Si de verdad crees que no hay NADA de texto en árabe o español, responde SOLO con la palabra "IMAGEN_VACIA".`;
+                    const prompt = `Eres un asistente experto. Lee esta imagen. Transcribe TODO el texto, vocabulario y explicaciones (en árabe y español) que veas. Cero excusas. Si la imagen que recibes es un cuadrado completamente en blanco, gris o negro liso sin letras, responde EXACTAMENTE con la palabra: "LIENZO_EN_BLANCO". En cualquier otro caso, escribe todo el texto que veas.`;
                     
                     const res = await openai.chat.completions.create({
                         model: "gpt-4o",
@@ -342,7 +332,9 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
                     });
 
                     const resultText = res.choices[0].message.content.trim();
-                    if (!resultText.includes("IMAGEN_VACIA")) {
+                    lastAiResponse = resultText;
+                    
+                    if (!resultText.includes("LIENZO_EN_BLANCO")) {
                         const { data } = await supabase.from('exam_knowledge').insert([{ category: `Foto: ${file.name}`, content: resultText }]).select();
                         if (data) { setKnowledge(prev => [...prev, data[0]]); processedCount++; }
                     }
@@ -352,7 +344,8 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
             if (processedCount > 0) {
                 alert(`¡Proceso completado! Se han extraído ${processedCount} nuevos bloques de conocimiento.`);
             } else {
-                alert("La IA ha revisado los archivos, pero no encontró texto útil, o el archivo estaba en blanco.");
+                // EL CHIVATO: Te mostrará la respuesta literal de ChatGPT
+                alert(`¡Atención! No se guardó nada. Esto es EXACTAMENTE lo que respondió la IA al ver tu archivo:\n\n"${lastAiResponse}"`);
             }
 
         } catch (err) {
