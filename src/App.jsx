@@ -125,15 +125,22 @@ Reglas:
   return parseVisionJsonResponse(response.choices?.[0]?.message?.content || "");
 }
 
-async function summarizeMaterialWithOpenAI(openai, sourceText, label) {
+async function summarizeMaterialWithOpenAI(openai, sourceText, label, priorityNotes = "") {
+  const priorityBlock = priorityNotes.trim()
+    ? `
+NOTAS DE PRIORIDAD DEL ADMINISTRADOR:
+${priorityNotes.trim()}
+`
+    : "";
   const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
 Analiza el siguiente material y devuelve una ficha útil para preparar examen.
 Incluye SOLO información que aparezca en el material: vocabulario, frases bilingües, verbos en presente, estructuras, gramática, errores habituales y ejemplos.
 Conserva literalmente todas las frases árabe-español / español-árabe que detectes.
 Incluye una sección llamada "FRASES BASE PARA EXAMEN" con pares de traducción cuando existan.
+Si hay NOTAS DE PRIORIDAD DEL ADMINISTRADOR, incorpóralas literalmente en una sección "PRIORIDAD PARA EXAMEN" y marca ese material como preferente para futuros simulacros.
 No inventes contenido que no esté en el material.
 
-FUENTE: ${label}
+FUENTE: ${label}${priorityBlock}
 MATERIAL:
 ${sourceText}`;
 
@@ -210,6 +217,102 @@ function parseGeneratedQuestions(rawContent) {
       throw new Error(`La IA no devolvió JSON de preguntas válido. Respuesta inicial: ${raw.slice(0, 300)}`);
     }
   }
+}
+
+
+function containsArabic(text) {
+  return /[\u0600-\u06FF]/.test(text || '');
+}
+
+function stripMarkdownNoise(text) {
+  return String(text || '')
+    .replace(/^[-*•\d.)\s]+/, '')
+    .replace(/\*\*/g, '')
+    .trim();
+}
+
+function extractStudyPairsFromKnowledge(knowledge) {
+  const pairs = [];
+  const seen = new Set();
+
+  (knowledge || []).forEach((block) => {
+    const source = block?.category || 'Material subido';
+    const lines = String(block?.content || '')
+      .split(/\n+/)
+      .map(stripMarkdownNoise)
+      .filter(line => line.length > 3);
+
+    for (const line of lines) {
+      if (!containsArabic(line)) continue;
+
+      const separators = [' = ', ' - ', ' – ', ' — ', ':', '|', ' / '];
+      for (const sep of separators) {
+        if (!line.includes(sep)) continue;
+        const parts = line.split(sep).map(stripMarkdownNoise).filter(Boolean);
+        if (parts.length < 2) continue;
+
+        const left = parts[0];
+        const right = parts.slice(1).join(' ').trim();
+        const arabic = containsArabic(left) ? left : containsArabic(right) ? right : '';
+        const spanish = containsArabic(left) ? right : left;
+
+        if (arabic && spanish && spanish.length > 1) {
+          const key = `${arabic}__${spanish}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            pairs.push({ arabic, spanish, source });
+          }
+          break;
+        }
+      }
+    }
+  });
+
+  return pairs;
+}
+
+function buildLocalTranslationTest(knowledge, desiredCount = 10) {
+  const pairs = extractStudyPairsFromKnowledge(knowledge);
+  if (pairs.length === 0) return [];
+
+  const shuffledPairs = shuffleArray(pairs);
+  const selected = Array.from({ length: desiredCount }, (_, index) => shuffledPairs[index % shuffledPairs.length]);
+  return selected.map((pair, index) => {
+    const direction = index % 2 === 0 ? 'ar-es' : 'es-ar';
+    const correctText = direction === 'ar-es' ? pair.spanish : pair.arabic;
+    const distractorPool = pairs
+      .filter(p => p !== pair)
+      .map(p => direction === 'ar-es' ? p.spanish : p.arabic)
+      .filter(Boolean);
+    const distractors = shuffleArray(Array.from(new Set(distractorPool))).slice(0, 2);
+    while (distractors.length < 2) distractors.push(direction === 'ar-es' ? 'No corresponde al material' : 'لا توجد إجابة كافية');
+
+    const opciones = shuffleArray([correctText, ...distractors]);
+    return {
+      tipo: 'traduccion',
+      direccion: direction,
+      pregunta: direction === 'ar-es' ? `Traduce al español: ${pair.arabic}` : `Traduce al árabe: ${pair.spanish}`,
+      opciones,
+      correcta: opciones.indexOf(correctText),
+      explicacion: 'Pregunta generada localmente a partir de pares árabe-español detectados en el material subido.',
+      fuente: pair.source
+    };
+  });
+}
+
+function getSpanishWritingPromptFromKnowledge(knowledge) {
+  const pairs = extractStudyPairsFromKnowledge(knowledge);
+  const spanishFirst = pairs.find(pair => pair.spanish && pair.arabic && pair.spanish.split(/\s+/).length >= 2);
+  if (spanishFirst) return spanishFirst;
+
+  const fallback = pairs[0];
+  if (fallback) return fallback;
+
+  return {
+    spanish: 'Escribe en árabe una frase sencilla en presente usando el vocabulario estudiado.',
+    arabic: '',
+    source: 'Material subido'
+  };
 }
 
 
@@ -422,12 +525,14 @@ export default function App() {
 // --- TUTOR IA (EXAMEN 1A2) ---
 function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     const [examApiKey, setExamApiKey] = useState(() => apiKey || localStorage.getItem('openai_key') || '');
-    const [activeTab, setActiveTab] = useState('knowledge');
+    const [activeTab, setActiveTab] = useState('test');
     const [knowledge, setKnowledge] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 0, text: "" });
     const [textInput, setTextInput] = useState("");
+    const [priorityNotes, setPriorityNotes] = useState("");
     const [test, setTest] = useState(null);
+    const [writingPrompt, setWritingPrompt] = useState(null);
     const [correctionResult, setCorrectionResult] = useState("");
     const [uploadedImage, setUploadedImage] = useState(null);
 
@@ -437,6 +542,15 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         fetchKnowledge();
     }, []);
 
+    useEffect(() => {
+        if (!isAdmin && activeTab === 'knowledge') setActiveTab('test');
+        if (isAdmin) setActiveTab('knowledge');
+    }, [isAdmin]);
+
+    useEffect(() => {
+        if (knowledge.length > 0) setWritingPrompt(getSpanishWritingPromptFromKnowledge(knowledge));
+    }, [knowledge]);
+
     // 1. Procesar Texto Libre
     const handleProcessMaterial = async () => {
         if (!textInput.trim()) return;
@@ -445,17 +559,28 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         setProgress({ current: 1, total: 1, text: "Analizando texto escrito..." });
         try {
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
+            const priorityBlock = priorityNotes.trim()
+                ? `
+NOTAS DE PRIORIDAD DEL ADMINISTRADOR:
+${priorityNotes.trim()}
+`
+                : "";
             const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
 Analiza este material y extrae SOLO información útil para examen que esté literalmente apoyada en el texto.
 Prioriza y conserva frases árabe-español / español-árabe, vocabulario y verbos en presente.
 Incluye una sección llamada "FRASES BASE PARA EXAMEN" con pares de traducción cuando existan.
+Si hay NOTAS DE PRIORIDAD DEL ADMINISTRADOR, incorpóralas literalmente en una sección "PRIORIDAD PARA EXAMEN" y marca esas frases, temas o documentos como preferentes.
 No inventes frases ni tiempos verbales que no aparezcan o no puedan deducirse directamente del material.
-
+${priorityBlock}
 MATERIAL:
 ${textInput}`;
             const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.1 });
-            const { data } = await supabase.from('exam_knowledge').insert([{ category: 'Material EOI', content: res.choices[0].message.content }]).select();
-            if (data) { setKnowledge([...knowledge, data[0]]); setTextInput(""); alert("¡Material procesado y memorizado!"); }
+            const storedContent = `${priorityNotes.trim() ? `PRIORIDAD PARA EXAMEN:
+${priorityNotes.trim()}
+
+` : ''}${res.choices[0].message.content}`;
+            const { data } = await supabase.from('exam_knowledge').insert([{ category: priorityNotes.trim() ? 'Material EOI · PRIORITARIO' : 'Material EOI', content: storedContent }]).select();
+            if (data) { setKnowledge([...knowledge, data[0]]); setTextInput(""); setPriorityNotes(""); alert("¡Material procesado y memorizado!"); }
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); setProgress({ current: 0, total: 0, text: "" }); }
     };
 
@@ -508,10 +633,13 @@ ${textInput}`;
                         page.cleanup?.();
 
                         if (pageText && pageText.length >= 10) {
-                            const summarized = await summarizeMaterialWithOpenAI(openai, pageText, category);
+                            const summarized = await summarizeMaterialWithOpenAI(openai, pageText, category, priorityNotes);
                             const { data, error } = await supabase
                                 .from('exam_knowledge')
-                                .insert([{ category, content: summarized }])
+                                .insert([{ category: priorityNotes.trim() ? `${category} · PRIORITARIO` : category, content: `${priorityNotes.trim() ? `PRIORIDAD PARA EXAMEN:
+${priorityNotes.trim()}
+
+` : ''}${summarized}` }])
                                 .select();
                             if (error) throw error;
                             if (data) {
@@ -531,10 +659,13 @@ ${textInput}`;
 
                     if (visionResult.hasText && visionResult.content.length >= 10) {
                         const category = `Foto: ${file.name}`;
-                        const summarized = await summarizeMaterialWithOpenAI(openai, visionResult.content, category);
+                        const summarized = await summarizeMaterialWithOpenAI(openai, visionResult.content, category, priorityNotes);
                         const { data, error } = await supabase
                             .from('exam_knowledge')
-                            .insert([{ category, content: summarized }])
+                            .insert([{ category: priorityNotes.trim() ? `${category} · PRIORITARIO` : category, content: `${priorityNotes.trim() ? `PRIORIDAD PARA EXAMEN:
+${priorityNotes.trim()}
+
+` : ''}${summarized}` }])
                             .select();
                         if (error) throw error;
                         if (data) {
@@ -570,6 +701,15 @@ ${textInput}`;
         if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
         setIsProcessing(true);
         try {
+            if (!examApiKey) {
+                const localTest = buildLocalTranslationTest(knowledge, 10);
+                if (localTest.length === 0) {
+                    throw new Error('No hay API Key y no he podido detectar pares árabe-español claros en el material memorizado. El administrador debe subir material con frases bilingües o añadir la API Key para generar preguntas con IA.');
+                }
+                setTest(localTest);
+                return;
+            }
+
             const context = knowledge
                 .map(k => `FUENTE: ${k.category || 'Material subido'}\n${k.content}`)
                 .join("\n\n---\n\n")
@@ -581,14 +721,15 @@ Genera un simulacro de examen usando EXCLUSIVAMENTE la base de conocimiento subi
 REGLAS OBLIGATORIAS:
 1. Crea exactamente 10 preguntas dentro de la propiedad "preguntas".
 2. Todas las preguntas deben nacer del material subido: frases, vocabulario, estructuras o ejemplos que aparezcan en la base.
-3. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
-4. Alterna traducción árabe → español y español → árabe: pregunta 1 ar-es, pregunta 2 es-ar, y así sucesivamente.
-5. Cada pregunta debe ser una frase completa, no palabras sueltas.
-6. Incluye exactamente 3 opciones por pregunta. Solo una opción es correcta.
-7. Las opciones incorrectas deben ser verosímiles y de nivel A2.
-8. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
-9. Si faltan frases completas en el material, construye frases simples en presente usando SOLO vocabulario y estructuras del material. Marca la explicación como "frase construida con material insuficiente".
-10. No devuelvas texto fuera del JSON.
+3. Si aparece una sección "PRIORIDAD PARA EXAMEN" o notas como "esto es muy importante" / "esto saldrá en el examen", usa ese material antes que el resto.
+4. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
+5. Alterna traducción árabe → español y español → árabe: pregunta 1 ar-es, pregunta 2 es-ar, y así sucesivamente.
+6. Cada pregunta debe ser una frase completa, no palabras sueltas.
+7. Incluye exactamente 3 opciones por pregunta. Solo una opción es correcta.
+8. Las opciones incorrectas deben ser verosímiles y de nivel A2.
+9. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
+10. Si faltan frases completas en el material, construye frases simples en presente usando SOLO vocabulario y estructuras del material. Marca la explicación como "frase construida con material insuficiente".
+11. No devuelvas texto fuera del JSON.
 
 Formato obligatorio de salida:
 {
@@ -627,21 +768,32 @@ ${context}`;
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
-    // 4. Corregir examen escrito a mano (Cámara)
+    // 4. Ejercicio de escritura a mano: frase en español -> respuesta en árabe
     const handleCorrectExam = async (base64Image) => {
-        if (!examApiKey) { alert("API Key OpenAI requerida para visión."); return; }
-        setIsProcessing(true); setUploadedImage(base64Image); setCorrectionResult("");
+        setUploadedImage(base64Image);
+        setCorrectionResult("");
+
+        if (!examApiKey) {
+            setCorrectionResult("Imagen subida correctamente. No hay API Key activa, así que el ejercicio queda disponible para el alumno, pero la corrección automática con visión queda pendiente. El administrador puede activarla desde el candado introduciendo la API Key.");
+            return;
+        }
+
+        setIsProcessing(true);
         try {
             const context = knowledge.map(k => k.content).join("\n");
+            const promptData = writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge);
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-            const prompt = `Eres profesor estricto pero empático de árabe (A2 EOI). Base de conocimiento: ${context}. 
-            El alumno sube un examen a mano. Lee el árabe. Corrige detalladamente: ortografía, gramática, diacríticos, trazos. 
+            const prompt = `Eres profesor estricto pero empático de árabe (A2 EOI). Base de conocimiento: ${context}.
+            Frase propuesta al alumno en español: ${promptData.spanish}
+            Traducción esperada si aparece en el material: ${promptData.arabic || 'no disponible'}
+            El alumno sube una respuesta escrita a mano en árabe. Lee el árabe. Corrige detalladamente: ortografía, gramática, diacríticos, trazos y adecuación a la frase española propuesta.
             Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo.`;
             const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64Image } }] }] });
             setCorrectionResult(res.choices[0].message.content);
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
+    const refreshWritingPrompt = () => setWritingPrompt(getSpanishWritingPromptFromKnowledge(knowledge));
     const handleCameraUpload = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => handleCorrectExam(reader.result); reader.readAsDataURL(file); };
 
     return (
@@ -658,15 +810,15 @@ ${context}`;
             </header>
             
             <div className="bg-white border-b flex overflow-x-auto">
-                <button onClick={() => setActiveTab('knowledge')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'knowledge' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Database className="w-5 h-5"/> 1. Conocimiento</button>
-                <button onClick={() => setActiveTab('test')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'test' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Activity className="w-5 h-5"/> 2. Simulacro</button>
-                <button onClick={() => setActiveTab('camera')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'camera' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Camera className="w-5 h-5"/> 3. Corregir a Mano</button>
+                {isAdmin && <button onClick={() => setActiveTab('knowledge')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'knowledge' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Database className="w-5 h-5"/> Admin · Conocimiento</button>}
+                <button onClick={() => setActiveTab('test')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'test' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Activity className="w-5 h-5"/> 1. Simulacro</button>
+                <button onClick={() => setActiveTab('camera')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'camera' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Camera className="w-5 h-5"/> 2. Escribir en árabe</button>
             </div>
             
             <div className="flex-1 p-6 max-w-4xl mx-auto w-full">
                 
                 {/* PESTAÑA 1: CONOCIMIENTO */}
-                {activeTab === 'knowledge' && (
+                {activeTab === 'knowledge' && isAdmin && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-xl font-bold text-indigo-800">Alimentar a la IA</h2>
@@ -690,6 +842,18 @@ ${context}`;
                                     />
                                 </div>
                                 <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA leerá primero el texto nativo del PDF y, si la página está basada en imagen, aplicará OCR visual con alta resolución.</p>
+
+                                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                                    <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Comentarios de prioridad para este material</label>
+                                    <textarea
+                                        className="w-full h-20 p-3 border border-amber-200 rounded-lg text-sm bg-white"
+                                        placeholder={'Ej.: esto es muy importante; esto saldrá en el examen; priorizar demostrativos; practicar frases en presente...'}
+                                        value={priorityNotes}
+                                        onChange={(event) => setPriorityNotes(event.target.value)}
+                                        disabled={isProcessing}
+                                    />
+                                    <p className="text-[11px] text-amber-700 mt-2">Estas notas se guardan dentro del bloque y el simulacro las usa para priorizar unos documentos, frases o temas por encima de otros.</p>
+                                </div>
                                 
                                 {/* ZONA DE CARGA CON BARRA DE PROGRESO */}
                                 <div className="mb-4">
@@ -754,19 +918,28 @@ ${context}`;
                     </div>
                 )}
                 
-                {/* PESTAÑA 3: CÁMARA */}
-                {activeTab === 'camera' && (
+                {/* PESTAÑA 3: CÁMARA */}                {activeTab === 'camera' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
-                        <h2 className="text-xl font-bold text-indigo-800 mb-2">Corrector de Caligrafía y Gramática</h2>
-                        <p className="text-sm text-slate-500 mb-6">Hazle una foto a tu examen a mano para corregirlo.</p>
+                        <h2 className="text-xl font-bold text-indigo-800 mb-2">Escritura en árabe desde frase española</h2>
+                        <p className="text-sm text-slate-500 mb-4">El alumno ve una frase en español, la escribe a mano en árabe y sube una foto de su respuesta.</p>
+
+                        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-5">
+                            <div className="flex justify-between items-start gap-3 mb-2">
+                                <span className="text-xs font-bold uppercase text-amber-700">Frase para escribir en árabe</span>
+                                <button onClick={refreshWritingPrompt} disabled={knowledge.length === 0} className="text-xs font-bold text-amber-800 hover:text-amber-900 underline disabled:opacity-40">Cambiar frase</button>
+                            </div>
+                            <p className="text-2xl font-bold text-slate-800">{(writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge)).spanish}</p>
+                            <p className="mt-2 text-[11px] text-amber-700">Fuente: {(writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge)).source}</p>
+                        </div>
+
                         <div className="relative border-2 border-dashed border-indigo-300 bg-indigo-50 rounded-2xl p-8 text-center hover:bg-indigo-100 cursor-pointer">
                             <input type="file" accept="image/*" capture="environment" onChange={handleCameraUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                            {isProcessing ? <div className="flex flex-col items-center text-indigo-600"><Loader className="w-10 h-10 animate-spin mb-2"/><span className="font-bold">Analizando caligrafía...</span></div> : <div className="flex flex-col items-center text-indigo-600"><Upload className="w-12 h-12 mb-3 opacity-80"/><span className="font-bold text-lg">Haz foto o sube archivo</span></div>}
+                            {isProcessing ? <div className="flex flex-col items-center text-indigo-600"><Loader className="w-10 h-10 animate-spin mb-2"/><span className="font-bold">Analizando respuesta...</span></div> : <div className="flex flex-col items-center text-indigo-600"><Upload className="w-12 h-12 mb-3 opacity-80"/><span className="font-bold text-lg">Subir foto de la frase escrita en árabe</span><span className="text-xs text-indigo-500 mt-2">No hace falta API Key para subir la respuesta; la corrección automática solo se activa si existe API Key.</span></div>}
                         </div>
                         {uploadedImage && !isProcessing && (
                             <div className="mt-8 border-t pt-6 flex flex-col md:flex-row gap-4 items-start">
-                                <img src={uploadedImage} alt="Tu examen" className="w-full md:w-48 object-cover rounded-lg border shadow-sm" />
-                                <div className="flex-1 bg-green-50 p-4 rounded-xl border border-green-200 text-sm text-slate-700 whitespace-pre-wrap">{correctionResult || "Error al corregir."}</div>
+                                <img src={uploadedImage} alt="Respuesta escrita" className="w-full md:w-48 object-cover rounded-lg border shadow-sm" />
+                                <div className="flex-1 bg-green-50 p-4 rounded-xl border border-green-200 text-sm text-slate-700 whitespace-pre-wrap">{correctionResult || "Respuesta subida."}</div>
                             </div>
                         )}
                     </div>
