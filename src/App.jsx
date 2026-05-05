@@ -177,13 +177,23 @@ function normalizeGeneratedQuestion(question, index) {
       ? safeQuestion.options
       : [];
   const opciones = [...new Set(rawOpciones.map(opt => String(opt || '').trim()).filter(Boolean))].slice(0, 4);  // Deducplicar y filtrar
+  const defaultPlaceholders = [
+    'Opción A',
+    'Opción B',
+    'Opción C',
+    'Opción D'
+  ];
+  const finalOpciones = opciones.length >= 4
+    ? opciones.slice(0, 4)
+    : [...opciones, ...defaultPlaceholders.slice(0, Math.max(0, 4 - opciones.length))];
   let correcta = Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : Number(safeQuestion.correcta);
-  if (!Number.isInteger(correcta) || correcta < 0 || correcta >= opciones.length) correcta = 0;
+  if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = finalOpciones.indexOf(String(rawOpciones[0] || '').trim());
+  if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = 0;
   return {
     tipo: safeQuestion.tipo || safeQuestion.type || 'traduccion',
-    direccion: safeQuestion.direccion || safeQuestion.direction || (index % 2 === 0 ? 'ar-es' : 'es-ar'),
+    direccion: safeQuestion.direccion || safeQuestion.direction || (Math.random() > 0.5 ? 'ar-es' : 'es-ar'),
     pregunta: safeQuestion.pregunta || safeQuestion.question || `Pregunta ${index + 1}`,
-    opciones: opciones.length >= 3 ? opciones : ['Opción A', 'Opción B', 'Opción C'],
+    opciones: finalOpciones,
     correcta,
     explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en el material subido.',
     fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
@@ -281,17 +291,18 @@ function buildLocalTranslationTest(knowledge, desiredCount = 10) {
 
   const shuffledPairs = shuffleArray(pairs);
   const selected = Array.from({ length: desiredCount }, (_, index) => shuffledPairs[index % shuffledPairs.length]);
-  return selected.map((pair, index) => {
-    const direction = index % 2 === 0 ? 'ar-es' : 'es-ar';
+  return selected.map((pair) => {
+    const direction = Math.random() > 0.5 ? 'ar-es' : 'es-ar';
     const correctText = direction === 'ar-es' ? pair.spanish : pair.arabic;
     const distractorPool = pairs
       .filter(p => p !== pair)
       .map(p => direction === 'ar-es' ? p.spanish : p.arabic)
       .filter(Boolean);
-    const distractors = shuffleArray(Array.from(new Set(distractorPool))).slice(0, 2);
-    while (distractors.length < 2) distractors.push(direction === 'ar-es' ? 'No corresponde al material' : 'لا توجد إجابة كافية');
+    const uniqueDistractors = Array.from(new Set(shuffleArray(distractorPool)));
+    const distractors = uniqueDistractors.slice(0, 3);
+    while (distractors.length < 3) distractors.push(direction === 'ar-es' ? 'No corresponde al material' : 'إجابة غير صحيحة');
 
-    const opciones = shuffleArray([correctText, ...distractors]);
+    const opciones = shuffleArray([correctText, ...distractors]).slice(0, 4);
     return {
       tipo: 'traduccion',
       direccion: direction,
@@ -729,9 +740,10 @@ REGLAS OBLIGATORIAS:
 4. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
 5. Alterna traducción árabe → español y español → árabe: pregunta 1 ar-es, pregunta 2 es-ar, y así sucesivamente.
 6. Cada pregunta debe ser una frase completa, no palabras sueltas.
-7. Incluye exactamente 3 opciones por pregunta. Solo una opción es correcta.
-8. Las opciones incorrectas deben ser verosímiles y de nivel A2.
-9. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
+7. Incluye exactamente 4 opciones por pregunta. Solo una opción es correcta.
+8. Alterna entre preguntas árabe → español y español → árabe, empezando aleatoriamente.
+9. Las opciones incorrectas deben ser verosímiles y de nivel A2.
+10. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
 10. Si faltan frases completas en el material, construye frases simples en presente usando SOLO vocabulario y estructuras del material. Marca la explicación como "frase construida con material insuficiente".
 11. No devuelvas texto fuera del JSON.
 
@@ -742,7 +754,7 @@ Formato obligatorio de salida:
       "tipo": "traduccion",
       "direccion": "ar-es",
       "pregunta": "Traduce al español: ...",
-      "opciones": ["...", "...", "..."],
+      "opciones": ["...", "...", "...", "..."],
       "correcta": 0,
       "explicacion": "...",
       "fuente": "..."
@@ -762,7 +774,7 @@ ${context}`;
             const parsed = parseGeneratedQuestions(raw);
             const normalized = parsed
                 .map(normalizeGeneratedQuestion)
-                .filter(q => q.pregunta && Array.isArray(q.opciones) && q.opciones.length >= 3)
+                .filter(q => q.pregunta && Array.isArray(q.opciones) && q.opciones.length >= 4)
                 .slice(0, 10);
             if (normalized.length === 0) {
                 console.error('Respuesta IA sin preguntas utilizables:', raw);
