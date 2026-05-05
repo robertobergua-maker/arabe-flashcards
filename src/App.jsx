@@ -325,17 +325,27 @@ function buildLocalTranslationTest(knowledge, desiredCount = 10) {
 
 function getSpanishWritingPromptFromKnowledge(knowledge) {
   const pairs = extractStudyPairsFromKnowledge(knowledge);
-  const spanishFirst = pairs.find(pair => pair.spanish && pair.arabic && pair.spanish.split(/\s+/).length >= 2);
-  if (spanishFirst) return spanishFirst;
+  if (!pairs || pairs.length === 0) {
+    return {
+      spanish: 'Escribe en árabe una frase sencilla en presente usando el vocabulario estudiado.',
+      arabic: '',
+      source: 'Material subido'
+    };
+  }
 
-  const fallback = pairs[0];
-  if (fallback) return fallback;
+  const validPairs = pairs.filter(pair => pair.spanish && pair.arabic);
+  const candidate = validPairs.length > 0 ? validPairs[Math.floor(Math.random() * validPairs.length)] : pairs[Math.floor(Math.random() * pairs.length)];
+  let { spanish, arabic, source } = candidate;
 
-  return {
-    spanish: 'Escribe en árabe una frase sencilla en presente usando el vocabulario estudiado.',
-    arabic: '',
-    source: 'Material subido'
-  };
+  if (containsArabic(spanish) && !containsArabic(arabic)) {
+    [spanish, arabic] = [arabic, spanish];
+  }
+
+  if (!spanish || containsArabic(spanish)) {
+    spanish = 'Escribe en árabe una frase sencilla en presente usando el vocabulario estudiado.';
+  }
+
+  return { spanish, arabic, source };
 }
 
 
@@ -827,7 +837,16 @@ Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo
     };
 
     const refreshWritingPrompt = () => setWritingPrompt(getSpanishWritingPromptFromKnowledge(knowledge));
-    const handleCameraUpload = (e) => { const file = e.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => handleCorrectExam(reader.result); reader.readAsDataURL(file); };
+    const handleCameraUpload = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        handleCorrectExam(reader.result);
+        e.target.value = null;
+      };
+      reader.readAsDataURL(file);
+    };
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -962,10 +981,22 @@ Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo
                             <p className="text-2xl font-bold text-slate-800">{(writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge)).spanish}</p>
                         </div>
 
-                        <div className="relative border-2 border-dashed border-indigo-300 bg-indigo-50 rounded-2xl p-8 text-center hover:bg-indigo-100 cursor-pointer">
+                        <label className="relative block border-2 border-dashed border-indigo-300 bg-indigo-50 rounded-2xl p-8 text-center hover:bg-indigo-100 cursor-pointer">
                             <input type="file" accept="image/*" capture="environment" onChange={handleCameraUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                            {isProcessing ? <div className="flex flex-col items-center text-indigo-600"><Loader className="w-10 h-10 animate-spin mb-2"/><span className="font-bold">Analizando respuesta...</span></div> : <div className="flex flex-col items-center text-indigo-600"><Upload className="w-12 h-12 mb-3 opacity-80"/><span className="font-bold text-lg">Subir foto de la frase escrita en árabe</span><span className="text-xs text-indigo-500 mt-2">No hace falta API Key para subir la respuesta; la corrección automática solo se activa si existe API Key.</span></div>}
-                        </div>
+                            {isProcessing ? (
+                              <div className="flex flex-col items-center text-indigo-600">
+                                <Loader className="w-10 h-10 animate-spin mb-2"/>
+                                <span className="font-bold">Analizando respuesta...</span>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center text-indigo-600">
+                                <Upload className="w-12 h-12 mb-3 opacity-80"/>
+                                <span className="font-bold text-lg">Subir foto de la frase escrita en árabe</span>
+                                <span className="text-xs text-indigo-500 mt-2">Toca aquí para seleccionar una imagen o abrir la cámara.</span>
+                                <span className="text-xs text-indigo-500 mt-1">No hace falta API Key para subir la respuesta; la corrección automática solo se activa si existe API Key.</span>
+                              </div>
+                            )}
+                        </label>
                         {uploadedImage && !isProcessing && (
                             <div className="mt-8 border-t pt-6 flex flex-col md:flex-row gap-4 items-start">
                                 <img src={uploadedImage} alt="Respuesta escrita" className="w-full md:w-48 object-cover rounded-lg border shadow-sm" />
