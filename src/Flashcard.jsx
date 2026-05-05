@@ -6,6 +6,7 @@ export default function Flashcard({
   onDelete,
   onEdit
 }) {
+  const removeArabicDiacritics = (text) => text ? text.replace(/[\u064B-\u065F\u0670]/g, '') : "";
   return (
     <div className="bg-white rounded-xl shadow p-4">
       <div className="text-sm text-slate-500 mb-2">
@@ -13,7 +14,7 @@ export default function Flashcard({
       </div>
 
       <div className="font-bold text-lg mb-1">
-        {frontLanguage === "spanish" ? data.spanish : data.arabic}
+        {frontLanguage === "spanish" ? data.spanish : (showDiacritics ? data.arabic : removeArabicDiacritics(data.arabic))}
       </div>
 
       {data.phonetic && (
