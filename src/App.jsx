@@ -189,12 +189,18 @@ function normalizeGeneratedQuestion(question, index) {
   let correcta = Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : Number(safeQuestion.correcta);
   if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = finalOpciones.indexOf(String(rawOpciones[0] || '').trim());
   if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = 0;
+  const direccion = safeQuestion.direccion || safeQuestion.direction || (Math.random() > 0.5 ? 'ar-es' : 'es-ar');
+  // Validar idioma de opciones basado en dirección
+  const isArabicQuestion = containsArabic(safeQuestion.pregunta || '');
+  const expectedArabicOptions = isArabicQuestion ? false : true; // Si pregunta en árabe, opciones en español; si en español, opciones en árabe
+  const filteredOpciones = finalOpciones.filter(opt => containsArabic(opt) === expectedArabicOptions);
+  const correctedOpciones = filteredOpciones.length >= 4 ? filteredOpciones.slice(0, 4) : finalOpciones.slice(0, 4); // Fallback si no se puede filtrar
   return {
     tipo: safeQuestion.tipo || safeQuestion.type || 'traduccion',
-    direccion: safeQuestion.direccion || safeQuestion.direction || (Math.random() > 0.5 ? 'ar-es' : 'es-ar'),
+    direccion,
     pregunta: safeQuestion.pregunta || safeQuestion.question || `Pregunta ${index + 1}`,
-    opciones: finalOpciones,
-    correcta,
+    opciones: correctedOpciones,
+    correcta: Math.min(correcta, correctedOpciones.length - 1),
     explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en el material subido.',
     fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
   };
@@ -299,7 +305,10 @@ function buildLocalTranslationTest(knowledge, desiredCount = 10) {
       .map(p => direction === 'ar-es' ? p.spanish : p.arabic)
       .filter(Boolean);
     const uniqueDistractors = Array.from(new Set(shuffleArray(distractorPool)));
-    const distractors = uniqueDistractors.slice(0, 3);
+    // Filtrar distractores con longitud similar (±50% de la correcta)
+    const correctLength = correctText.length;
+    const similarDistractors = uniqueDistractors.filter(d => Math.abs(d.length - correctLength) / correctLength <= 0.5);
+    const distractors = similarDistractors.slice(0, 3);
     while (distractors.length < 3) distractors.push(direction === 'ar-es' ? 'No corresponde al material' : 'إجابة غير صحيحة');
 
     const opciones = shuffleArray([correctText, ...distractors]).slice(0, 4);
@@ -738,14 +747,14 @@ REGLAS OBLIGATORIAS:
 2. Todas las preguntas deben nacer del material subido: frases, vocabulario, estructuras o ejemplos que aparezcan en la base.
 3. Si aparece una sección "PRIORIDAD PARA EXAMEN" o notas como "esto es muy importante" / "esto saldrá en el examen", usa ese material antes que el resto.
 4. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
-5. Alterna traducción árabe → español y español → árabe: pregunta 1 ar-es, pregunta 2 es-ar, y así sucesivamente.
+5. Alterna traducción árabe → español y español → árabe, empezando aleatoriamente.
 6. Cada pregunta debe ser una frase completa, no palabras sueltas.
 7. Incluye exactamente 4 opciones por pregunta. Solo una opción es correcta.
-8. Alterna entre preguntas árabe → español y español → árabe, empezando aleatoriamente.
-9. Las opciones incorrectas deben ser verosímiles y de nivel A2.
+8. Si la pregunta está en español, TODAS las 4 opciones deben estar en árabe (una correcta). Si la pregunta está en árabe, TODAS las opciones en español.
+9. Las opciones incorrectas deben ser verosímiles y de nivel A2, con longitud similar (±50%) a la respuesta correcta.
 10. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
-10. Si faltan frases completas en el material, construye frases simples en presente usando SOLO vocabulario y estructuras del material. Marca la explicación como "frase construida con material insuficiente".
-11. No devuelvas texto fuera del JSON.
+11. Si faltan frases completas en el material, construye frases simples en presente usando SOLO vocabulario y estructuras del material. Marca la explicación como "frase construida con material insuficiente".
+12. No devuelvas texto fuera del JSON.
 
 Formato obligatorio de salida:
 {
