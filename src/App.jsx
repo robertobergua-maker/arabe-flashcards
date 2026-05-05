@@ -120,8 +120,8 @@ Reglas:
     messages: [{
       role: "user",
       content: [
-        { type: "text", text: prompt },
-        { type: "image_url", image_url: { url: imageDataUrl, detail: "high" } }
+        { type: "input_text", text: prompt },
+        { type: "input_image", image_url: imageDataUrl }
       ]
     }]
   });
@@ -808,11 +808,20 @@ ${context}`;
             const promptData = writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge);
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
             const prompt = `Eres profesor estricto pero empático de árabe (A2 EOI). Base de conocimiento: ${context}.
-            Frase propuesta al alumno en español: ${promptData.spanish}
-            Traducción esperada si aparece en el material: ${promptData.arabic || 'no disponible'}
-            El alumno sube una respuesta escrita a mano en árabe. Lee el árabe. Corrige detalladamente: ortografía, gramática, diacríticos, trazos y adecuación a la frase española propuesta.
-            Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo.`;
-            const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: [{ type: "text", text: prompt }, { type: "image_url", image_url: { url: base64Image } }] }] });
+Frase propuesta al alumno en español: ${promptData.spanish}
+Traducción esperada si aparece en el material: ${promptData.arabic || 'no disponible'}
+El alumno sube una respuesta escrita a mano en árabe. Lee el árabe. Corrige detalladamente: ortografía, gramática, diacríticos, trazos y adecuación a la frase española propuesta.
+Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo.`;
+            const res = await openai.chat.completions.create({
+              model: "gpt-4o",
+              messages: [{
+                role: "user",
+                content: [
+                  { type: "input_text", text: prompt },
+                  { type: "input_image", image_url: base64Image }
+                ]
+              }]
+            });
             setCorrectionResult(res.choices[0].message.content);
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
