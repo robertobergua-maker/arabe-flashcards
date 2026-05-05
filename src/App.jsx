@@ -904,7 +904,6 @@ ${context}`;
                 {activeTab === 'test' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up flex flex-col h-full">
                         <button onClick={handleGenerateTest} disabled={isProcessing || knowledge.length === 0} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex justify-center items-center gap-2 text-lg mb-3 shadow-md">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <><PlayCircle className="w-6 h-6"/> Generar 10 preguntas del material subido</>}</button>
-                        <p className="text-xs text-slate-500 mb-6 text-center">El simulacro usa solo el material memorizado, frases árabe↔español y verbos en presente.</p>
                         <div className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200">
                             {!test ? <div className="text-center text-slate-400 py-10">Genera un test para empezar.</div> : (
                                 <div className="space-y-6">{test.map((q, i) => (
@@ -914,7 +913,6 @@ ${context}`;
                                             <span className="shrink-0 text-[10px] uppercase font-bold px-2 py-1 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">{q.direccion === 'es-ar' ? 'ES → AR' : 'AR → ES'}</span>
                                         </div>
                                         <div className="grid grid-cols-1 gap-2">{q.opciones.map((op, idx) => ( <button key={idx} onClick={() => alert(idx === q.correcta ? `¡Correcto! ${q.explicacion}` : `Incorrecto. ${q.explicacion || ''}`)} className={`text-left p-3 border border-slate-200 rounded hover:bg-indigo-50 hover:border-indigo-300 text-sm font-medium ${/[؀-ۿ]/.test(op) ? 'font-arabic text-lg text-right' : ''}`} dir={/[؀-ۿ]/.test(op) ? 'rtl' : 'ltr'}>{op}</button> ))}</div>
-                                        {q.fuente && <p className="mt-3 text-[11px] text-slate-400 font-medium">Fuente: {q.fuente}</p>}
                                     </div>
                                 ))}</div>
                             )}
@@ -933,7 +931,6 @@ ${context}`;
                                 <button onClick={refreshWritingPrompt} disabled={knowledge.length === 0} className="text-xs font-bold text-amber-800 hover:text-amber-900 underline disabled:opacity-40">Cambiar frase</button>
                             </div>
                             <p className="text-2xl font-bold text-slate-800">{(writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge)).spanish}</p>
-                            <p className="mt-2 text-[11px] text-amber-700">Fuente: {(writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge)).source}</p>
                         </div>
 
                         <div className="relative border-2 border-dashed border-indigo-300 bg-indigo-50 rounded-2xl p-8 text-center hover:bg-indigo-100 cursor-pointer">
