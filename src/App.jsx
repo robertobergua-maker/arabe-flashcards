@@ -190,9 +190,8 @@ function normalizeGeneratedQuestion(question, index) {
   if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = finalOpciones.indexOf(String(rawOpciones[0] || '').trim());
   if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = 0;
   const direccion = safeQuestion.direccion || safeQuestion.direction || (Math.random() > 0.5 ? 'ar-es' : 'es-ar');
-  // Validar idioma de opciones basado en dirección
-  const isArabicQuestion = containsArabic(safeQuestion.pregunta || '');
-  const expectedArabicOptions = isArabicQuestion ? false : true; // Si pregunta en árabe, opciones en español; si en español, opciones en árabe
+  // Validar idioma de opciones basado en dirección: ar-es -> opciones en español, es-ar -> opciones en árabe
+  const expectedArabicOptions = direccion === 'es-ar'; // Si es-ar, opciones en árabe; si ar-es, en español
   const filteredOpciones = finalOpciones.filter(opt => containsArabic(opt) === expectedArabicOptions);
   const correctedOpciones = filteredOpciones.length >= 4 ? filteredOpciones.slice(0, 4) : finalOpciones.slice(0, 4); // Fallback si no se puede filtrar
   return {
