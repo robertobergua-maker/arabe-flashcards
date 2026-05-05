@@ -28,6 +28,10 @@ const cleanExtractedText = (text) => (text || "")
   .replace(/\s+\n/g, "\n")
   .replace(/\n{3,}/g, "\n\n")
   .replace(/[ \t]{2,}/g, " ")
+  .replace(/Página \d+/gi, "")  // Eliminar números de página
+  .replace(/\b\d{1,3}\b/g, "")  // Eliminar números sueltos (1-3 dígitos)
+  .replace(/\.\w{2,4}(\s|$)/g, "")  // Eliminar extensiones de archivo
+  .replace(/\b\w{1,2}\b/g, "")  // Eliminar palabras muy cortas (1-2 letras, posibles fragmentos)
   .trim();
 
 async function extractTextFromPdfPage(page) {
@@ -172,7 +176,7 @@ function normalizeGeneratedQuestion(question, index) {
     : Array.isArray(safeQuestion.options)
       ? safeQuestion.options
       : [];
-  const opciones = rawOpciones.map(opt => String(opt || '').trim()).filter(Boolean).slice(0, 4);
+  const opciones = [...new Set(rawOpciones.map(opt => String(opt || '').trim()).filter(Boolean))].slice(0, 4);  // Deducplicar y filtrar
   let correcta = Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : Number(safeQuestion.correcta);
   if (!Number.isInteger(correcta) || correcta < 0 || correcta >= opciones.length) correcta = 0;
   return {
@@ -245,7 +249,7 @@ function extractStudyPairsFromKnowledge(knowledge) {
     for (const line of lines) {
       if (!containsArabic(line)) continue;
 
-      const separators = [' = ', ' - ', ' – ', ' — ', ':', '|', ' / '];
+      const separators = [' = ', ' - ', ' – ', ' — ', ':', ' : ', '|', ' | ', ' / ', ' /'];
       for (const sep of separators) {
         if (!line.includes(sep)) continue;
         const parts = line.split(sep).map(stripMarkdownNoise).filter(Boolean);
