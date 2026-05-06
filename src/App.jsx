@@ -515,6 +515,7 @@ function adaptLocalTestToMode(test, mode) {
 
 // --- PANTALLA DE BIENVENIDA ---
 function WelcomeScreen({ onStartFlashcards, onStartExam }) {
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden notranslate" translate="no">
         <div className="absolute top-10 left-10 text-emerald-500 opacity-10 animate-bounce"><BookOpen size={80} /></div>
@@ -543,14 +544,43 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
                 <button onClick={onStartExam} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 text-lg">
                     <Activity size={24} /> Preparación Examen 1A2
                 </button>
-            </div>
-            <div className="mt-7 text-left bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm text-slate-600">
-                <p className="font-bold text-slate-800 mb-2">Ayuda rápida</p>
-                <p><span className="font-semibold">Repaso:</span> estudia tarjetas, usa filtros y escucha el árabe.</p>
-                <p className="mt-1"><span className="font-semibold">Examen:</span> genera simulacros desde el material subido y repasa tus errores locales.</p>
-                <p className="mt-1"><span className="font-semibold">Navegación:</span> puedes usar los botones de la app o atrás/adelante del navegador.</p>
+                <button onClick={() => setIsHelpOpen(true)} className="w-full bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold py-3 px-6 rounded-2xl shadow-sm transition-all active:scale-95 flex items-center justify-center gap-3">
+                    <HelpCircle size={20} /> Ayuda de uso
+                </button>
             </div>
         </div>
+        {isHelpOpen && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden">
+              <div className="bg-emerald-700 text-white px-5 py-4 flex items-center justify-between">
+                <h2 className="font-bold flex items-center gap-2"><HelpCircle className="w-5 h-5" /> Ayuda de Lamadrasa</h2>
+                <button onClick={() => setIsHelpOpen(false)} className="p-1 rounded-full hover:bg-white/20"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="p-5 text-left text-sm text-slate-600 space-y-4">
+                <div>
+                  <p className="font-bold text-slate-800">Repaso de vocabulario</p>
+                  <p>Practica tarjetas español-árabe, escucha la pronunciación, oculta o muestra vocales y filtra por pistas o categorías.</p>
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800">Juegos</p>
+                  <p>Usa ejercicios rápidos de escucha, memoria, quiz y velocidad para reforzar vocabulario sin hacer un simulacro completo.</p>
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800">Preparación Examen 1A2</p>
+                  <p>Genera simulacros desde el material subido. Traducción practica frases; Auditivo obliga a escuchar árabe; Gramática pregunta por estructuras como presente, negación, pronombres, demostrativos, posesión y concordancia.</p>
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800">Errores locales</p>
+                  <p>Los fallos del simulacro se guardan solo en este navegador para que cada usuario tenga su propio repaso.</p>
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800">Modo administrador</p>
+                  <p>Permite importar tarjetas, subir material de examen, añadir comentarios de prioridad y revisar la base de datos.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
     </div>
   );
 }
@@ -950,6 +980,57 @@ ${priorityNotes.trim()}
                 .join("\n\n---\n\n")
                 .slice(0, 45000);
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
+            const candidateCount = Math.max(desiredCount + 6, Math.ceil(desiredCount * 1.6));
+            const modeRules = mode === 'gramatica'
+                ? `MODO GRAMÁTICA:
+- Genera SOLO preguntas de tipo "gramatica".
+- No hagas traducciones directas.
+- Pregunta por estructuras A2 del material: presente, negación, pronombres personales, pronombres sufijados, demostrativos, posesión, concordancia, género/número, anexión y partículas de lugar.
+- Usa formatos como completar hueco, elegir la forma correcta, detectar la frase correcta o elegir la explicación gramatical correcta.
+- Las 4 opciones deben tener el mismo tipo y el mismo idioma entre sí.
+- La explicación debe indicar la regla o patrón del material.`
+                : mode === 'auditivo'
+                  ? `MODO AUDITIVO:
+- Genera SOLO preguntas de tipo "audio".
+- En "pregunta" escribe SOLO una frase árabe completa del material, sin "Traduce..." ni texto introductorio.
+- Las 4 opciones deben ser traducciones completas en español.
+- El usuario escuchará la frase árabe y elegirá la traducción correcta.`
+                  : mode === 'traduccion'
+                    ? `MODO TRADUCCIÓN:
+- Genera SOLO preguntas de tipo "traduccion".
+- Mezcla árabe→español y español→árabe.
+- Cada pregunta debe pedir traducir una frase completa del material.`
+                    : `MODO MIXTO:
+- Mezcla preguntas de tipo "traduccion", "audio" y "gramatica".
+- Aproximadamente un tercio de cada tipo si el material lo permite.
+- Traducción practica frases completas; audio usa frase árabe escuchable; gramática pregunta por estructuras A2.`;
+            const formatExample = mode === 'gramatica'
+                ? `{
+  "preguntas": [
+    {
+      "tipo": "gramatica",
+      "direccion": "GRAM → AR",
+      "pregunta": "Completa con el pronombre sufijado correcto: كِتَابُ...",
+      "opciones": ["كَ", "كِ", "هُ", "هَا"],
+      "correcta": 0,
+      "explicacion": "Se usa كَ para 'tu' masculino en anexión.",
+      "fuente": "..."
+    }
+  ]
+}`
+                : `{
+  "preguntas": [
+    {
+      "tipo": "${mode === 'auditivo' ? 'audio' : 'traduccion'}",
+      "direccion": "ar-es",
+      "pregunta": "${mode === 'auditivo' ? 'أَسْكُنُ فِي مَدْرِيد' : 'Traduce al español: أَسْكُنُ فِي مَدْرِيد'}",
+      "opciones": ["Vivo en Madrid", "Estudio en Madrid", "Voy a Madrid", "Trabajo en Madrid"],
+      "correcta": 0,
+      "explicacion": "Frase del material: أَسْكُنُ فِي مَدْرِيد",
+      "fuente": "..."
+    }
+  ]
+}`;
             const prompt = `Eres profesor de Árabe nivel A2 de EOI.
 Genera un simulacro de examen usando EXCLUSIVAMENTE la base de conocimiento subida por el usuario.
 Configuración del simulacro:
@@ -957,23 +1038,20 @@ Configuración del simulacro:
 - Modo: ${examOptions.mode}
 - Dificultad: ${examOptions.difficulty}
 
-TIPOS SEGÚN MODO:
-- modo "traduccion": todas las preguntas tendrán tipo "traduccion"; alterna árabe→español y español→árabe.
-- modo "auditivo": todas las preguntas tendrán tipo "audio"; en "pregunta" escribe SOLO una frase árabe completa del material, sin texto español introductorio, y las 4 opciones serán traducciones españolas.
-- modo "gramatica": todas las preguntas tendrán tipo "gramatica"; pregunta por una estructura A2 del material (demostrativos, pronombres, negación, presente, posesión, concordancia) y ofrece 4 opciones. Puede ser completar hueco o elegir forma correcta.
-- modo "mixto": mezcla aproximadamente traduccion, audio y gramatica.
+${modeRules}
 
 REGLAS OBLIGATORIAS:
-1. Crea ${Math.max(desiredCount + 6, Math.ceil(desiredCount * 1.6))} preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las ${desiredCount} mejores válidas.
+1. Crea ${candidateCount} preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las ${desiredCount} mejores válidas.
 2. Todas las preguntas deben nacer de frases COMPLETAS relacionadas directamente con el material subido: no inventes temas externos.
-3. Usa frases completas, nunca palabras sueltas. Cada frase debe tener sujeto, verbo en presente y complemento mínimo.
+3. En traducción y audio, usa frases completas, nunca palabras sueltas. En gramática, puedes usar huecos o formas cortas si sirven para evaluar la estructura.
 4. Si aparece "PRIORIDAD PARA EXAMEN" o notas como "muy importante" / "saldrá en examen", usa ese material PRIMERO (8 preguntas candidatas mínimo).
-5. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
-6. DIRECCIÓN ALEATORIA Y COHERENTE:
+5. Prioriza verbos en presente salvo que el material de clase pida expresamente otra estructura A2.
+6. DIRECCIÓN COHERENTE:
    - Para "direccion": "ar-es", la pregunta debe ser una frase en ÁRABE y las 4 opciones deben estar en ESPAÑOL.
    - Para "direccion": "es-ar", la pregunta debe ser una frase en ESPAÑOL y las 4 opciones deben estar en ÁRABE.
-   - Mezcla ambas direcciones de forma aleatoria y equilibrada.
+   - Para "direccion": "GRAM → AR" o "GRAM → ES", aplica solo a preguntas de gramática.
 7. El texto de "pregunta" debe empezar exactamente por "Traduce al español: " o "Traduce al árabe: " según corresponda.
+   Excepción: tipo "audio" y tipo "gramatica" no deben empezar por "Traduce".
 8. Incluye exactamente 4 opciones por pregunta. Solo 1 opción es correcta.
 9. REGLA DE IDIOMA ESTRICTA:
    - Pregunta en español → TODAS las 4 opciones en árabe (1 correcta, 3 falsas).
@@ -993,19 +1071,7 @@ REGLAS OBLIGATORIAS:
 16. JSON únicamente, sin texto extra.
 
 Formato obligatorio:
-{
-  "preguntas": [
-    {
-      "tipo": "traduccion | audio | gramatica",
-      "direccion": "ar-es",
-      "pregunta": "Traduce al español: ...",
-      "opciones": ["...", "...", "...", "..."],
-      "correcta": 0,
-      "explicacion": "...",
-      "fuente": "..."
-    }
-  ]
-}
+${formatExample}
 
 BASE DE CONOCIMIENTO:
 ${context}`;
