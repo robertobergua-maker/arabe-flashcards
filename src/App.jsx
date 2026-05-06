@@ -20,6 +20,11 @@ const safeGetStorage = (key, fallback) => { try { const saved = localStorage.get
 const setSafeStorage = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { console.warn("No se pudo guardar localmente:", e); } };
 const getCardType = (card) => { if (!card) return 'word'; if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase'; return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word'; };
 const playSmartAudio = (text) => { if (!text) return; try { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'ar-SA'; utterance.rate = 0.7; const voices = window.speechSynthesis.getVoices(); const preferredVoice = voices.find(v => v.lang.includes('ar')); if (preferredVoice) utterance.voice = preferredVoice; window.speechSynthesis.speak(utterance); } catch (e) { console.error("Audio error", e); } };
+const APP_VIEWS = new Set(['welcome', 'flashcards', 'exam']);
+const getViewFromHash = () => {
+  const hashView = window.location.hash.replace(/^#\/?/, '');
+  return APP_VIEWS.has(hashView) ? hashView : '';
+};
 
 function ArabicTextWithAudio({ text, className = "", buttonClassName = "" }) {
   return (
@@ -189,7 +194,50 @@ function extractJsonArray(rawContent) {
   return JSON.parse(candidate.substring(start, end + 1));
 }
 
-function normalizeGeneratedQuestion(question, index) {
+function normalizeGeneratedGrammarQuestion(question, index) {
+  const safeQuestion = question && typeof question === 'object' ? question : {};
+  const rawOpciones = Array.isArray(safeQuestion.opciones)
+    ? safeQuestion.opciones
+    : Array.isArray(safeQuestion.options)
+      ? safeQuestion.options
+      : [];
+  const opciones = [...new Set(rawOpciones.map(opt => cleanExamPhrase(opt)).filter(Boolean))];
+  let correcta = Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : Number(safeQuestion.correcta);
+  if (!Number.isInteger(correcta) || correcta < 0 || correcta >= rawOpciones.length) correcta = 0;
+
+  const pregunta = cleanExamPhrase(safeQuestion.pregunta || safeQuestion.question || `Pregunta de gramática ${index + 1}`);
+  const respuestaCorrecta = cleanExamPhrase(rawOpciones[correcta]);
+  if (!pregunta || !respuestaCorrecta) return null;
+
+  const correctIsArabic = containsArabic(respuestaCorrecta);
+  const validOpciones = opciones
+    .filter(opt => containsArabic(opt) === correctIsArabic)
+    .filter(opt => opt === respuestaCorrecta || isOptionLengthClose(opt, respuestaCorrecta));
+
+  if (!validOpciones.includes(respuestaCorrecta) || validOpciones.length < 4) return null;
+
+  const correctedOpciones = shuffleArray([
+    respuestaCorrecta,
+    ...validOpciones.filter(opt => opt !== respuestaCorrecta).slice(0, 3)
+  ]);
+
+  return {
+    tipo: 'gramatica',
+    direccion: correctIsArabic ? 'GRAM → AR' : 'GRAM → ES',
+    pregunta,
+    opciones: correctedOpciones,
+    correcta: correctedOpciones.indexOf(respuestaCorrecta),
+    explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en una estructura del material subido.',
+    fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
+  };
+}
+
+function normalizeGeneratedQuestion(question, index, mode = 'traduccion') {
+  const requestedType = String(question?.tipo || question?.type || '').toLowerCase();
+  if (mode === 'gramatica' || requestedType.includes('gram')) {
+    return normalizeGeneratedGrammarQuestion(question, index);
+  }
+
   const safeQuestion = question && typeof question === 'object' ? question : {};
   const rawOpciones = Array.isArray(safeQuestion.opciones)
     ? safeQuestion.opciones
@@ -210,6 +258,7 @@ function normalizeGeneratedQuestion(question, index) {
   const respuestaCorrecta = cleanExamPhrase(rawOpciones[correcta]);
 
   if (!isLikelyPhrase(cuerpoPregunta, preguntaEsArabe)) return null;
+  if ((mode === 'auditivo' || requestedType.includes('audio')) && !preguntaEsArabe) return null;
   if (!respuestaCorrecta || !optionLanguageMatches(respuestaCorrecta, direccion) || !optionLooksLikeAnswerPhrase(respuestaCorrecta, direccion)) return null;
 
   const validOpciones = opciones
@@ -226,9 +275,10 @@ function normalizeGeneratedQuestion(question, index) {
   const finalCorrecta = correctedOpciones.indexOf(respuestaCorrecta);
   
   return {
-    tipo: safeQuestion.tipo || safeQuestion.type || 'traduccion',
+    tipo: mode === 'auditivo' || requestedType.includes('audio') ? 'audio' : 'traduccion',
     direccion,
-    pregunta,
+    pregunta: mode === 'auditivo' || requestedType.includes('audio') ? 'Escucha la frase y elige la traducción correcta' : pregunta,
+    audioText: mode === 'auditivo' || requestedType.includes('audio') ? cuerpoPregunta : '',
     opciones: correctedOpciones,
     correcta: finalCorrecta,
     explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en el material subido.',
@@ -279,6 +329,7 @@ function getQuestionBody(questionText) {
     .replace(/^Traduce\s+al\s+español\s*:\s*/i, '')
     .replace(/^Traduce\s+al\s+árabe\s*:\s*/i, '')
     .replace(/^Traduce\s+al\s+arabe\s*:\s*/i, '')
+    .replace(/^Escucha[^:]*:\s*/i, '')
     .trim());
 }
 
@@ -330,7 +381,7 @@ function isOptionLengthClose(option, reference) {
 const EXAM_LOCAL_HISTORY_KEY = 'exam_1a2_local_history';
 
 function getQuestionFingerprint(question) {
-  const body = getQuestionBody(question?.pregunta || '');
+  const body = question?.audioText || getQuestionBody(question?.pregunta || '');
   const answer = question?.opciones?.[question.correcta] || '';
   return normalizeForSearch(`${question?.direccion || ''}|${body}|${answer}`).slice(0, 220);
 }
@@ -339,7 +390,9 @@ function buildExamHistoryEntry(question, selectedIndex, isCorrect) {
   return {
     id: getQuestionFingerprint(question),
     date: new Date().toISOString(),
+    tipo: question.tipo || 'traduccion',
     pregunta: question.pregunta,
+    audioText: question.audioText || '',
     direccion: question.direccion,
     selected: question.opciones[selectedIndex],
     correct: question.opciones[question.correcta],
@@ -445,6 +498,18 @@ function buildLocalTranslationTest(knowledge, desiredCount = 10) {
   return shuffleArray([...arEsQuestions, ...esArQuestions]).slice(0, desiredCount);
 }
 
+function adaptLocalTestToMode(test, mode) {
+  if (mode !== 'auditivo') return test;
+  return test
+    .filter(question => question.direccion === 'ar-es')
+    .map(question => ({
+      ...question,
+      tipo: 'audio',
+      audioText: getQuestionBody(question.pregunta),
+      pregunta: 'Escucha la frase y elige la traducción correcta'
+    }));
+}
+
 
 
 
@@ -479,6 +544,12 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
                     <Activity size={24} /> Preparación Examen 1A2
                 </button>
             </div>
+            <div className="mt-7 text-left bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm text-slate-600">
+                <p className="font-bold text-slate-800 mb-2">Ayuda rápida</p>
+                <p><span className="font-semibold">Repaso:</span> estudia tarjetas, usa filtros y escucha el árabe.</p>
+                <p className="mt-1"><span className="font-semibold">Examen:</span> genera simulacros desde el material subido y repasa tus errores locales.</p>
+                <p className="mt-1"><span className="font-semibold">Navegación:</span> puedes usar los botones de la app o atrás/adelante del navegador.</p>
+            </div>
         </div>
     </div>
   );
@@ -486,7 +557,7 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
 
 // --- COMPONENTE PRINCIPAL APP ---
 export default function App() {
-  const [currentView, setCurrentView] = useState(() => sessionStorage.getItem('current_view') || 'welcome');
+  const [currentView, setCurrentView] = useState(() => getViewFromHash() || sessionStorage.getItem('current_view') || 'welcome');
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
@@ -503,6 +574,23 @@ export default function App() {
   useEffect(() => { localStorage.setItem('pref_lang', frontLanguage); }, [frontLanguage]);
   useEffect(() => { localStorage.setItem('pref_diacritics', JSON.stringify(showDiacritics)); }, [showDiacritics]);
   useEffect(() => { localStorage.setItem('games_open', JSON.stringify(isGamesHubOpen)); }, [isGamesHubOpen]);
+
+  useEffect(() => {
+    const initialView = APP_VIEWS.has(currentView) ? currentView : 'welcome';
+    sessionStorage.setItem('current_view', initialView);
+    if (!window.history.state?.appView) {
+      window.history.replaceState({ appView: initialView }, '', `#${initialView}`);
+    }
+
+    const handlePopState = (event) => {
+      const nextView = event.state?.appView || getViewFromHash() || 'welcome';
+      sessionStorage.setItem('current_view', nextView);
+      setCurrentView(nextView);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     const loadVoices = () => { window.speechSynthesis.getVoices(); };
@@ -525,9 +613,20 @@ export default function App() {
     } catch (error) { console.error("Error:", error); } finally { setLoading(false); }
   }
 
-  const goToFlashcards = () => { sessionStorage.setItem('current_view', 'flashcards'); setCurrentView('flashcards'); };
-  const goToExam = () => { sessionStorage.setItem('current_view', 'exam'); setCurrentView('exam'); };
-  const goToWelcome = () => { sessionStorage.setItem('current_view', 'welcome'); setCurrentView('welcome'); };
+  const navigateTo = (view, { replace = false } = {}) => {
+    const nextView = APP_VIEWS.has(view) ? view : 'welcome';
+    sessionStorage.setItem('current_view', nextView);
+    setCurrentView(nextView);
+    const method = replace ? 'replaceState' : 'pushState';
+    window.history[method]({ appView: nextView }, '', `#${nextView}`);
+  };
+
+  const goToFlashcards = () => navigateTo('flashcards');
+  const goToExam = () => navigateTo('exam');
+  const goToWelcome = () => {
+    if (currentView === 'welcome') return;
+    navigateTo('welcome', { replace: true });
+  };
   
   const handleAdminToggle = () => { if (isAdminMode) setIsAdminMode(false); else { const p = prompt("🔒 Contraseña:"); if (p === "1234") setIsAdminMode(true); } };
 
@@ -832,9 +931,13 @@ ${priorityNotes.trim()}
         setIsProcessing(true);
         setAnswered({});
         const desiredCount = Number(examOptions.count) || 10;
+        const mode = examOptions.mode || 'mixto';
         try {
             if (!examApiKey) {
-                const localTest = buildLocalTranslationTest(knowledge, desiredCount);
+                if (mode === 'gramatica') {
+                    throw new Error('El modo Gramática necesita API Key para crear ejercicios de estructuras A2 a partir del material subido.');
+                }
+                const localTest = adaptLocalTestToMode(buildLocalTranslationTest(knowledge, mode === 'auditivo' ? desiredCount * 2 : desiredCount), examOptions.mode).slice(0, desiredCount);
                 if (localTest.length < desiredCount) {
                     throw new Error(`No hay API Key y no he podido detectar al menos ${desiredCount} frases completas árabe-español con distractores de longitud parecida. El administrador debe subir material con frases bilingües o añadir la API Key para generar preguntas con IA.`);
                 }
@@ -854,6 +957,12 @@ Configuración del simulacro:
 - Modo: ${examOptions.mode}
 - Dificultad: ${examOptions.difficulty}
 
+TIPOS SEGÚN MODO:
+- modo "traduccion": todas las preguntas tendrán tipo "traduccion"; alterna árabe→español y español→árabe.
+- modo "auditivo": todas las preguntas tendrán tipo "audio"; en "pregunta" escribe SOLO una frase árabe completa del material, sin texto español introductorio, y las 4 opciones serán traducciones españolas.
+- modo "gramatica": todas las preguntas tendrán tipo "gramatica"; pregunta por una estructura A2 del material (demostrativos, pronombres, negación, presente, posesión, concordancia) y ofrece 4 opciones. Puede ser completar hueco o elegir forma correcta.
+- modo "mixto": mezcla aproximadamente traduccion, audio y gramatica.
+
 REGLAS OBLIGATORIAS:
 1. Crea ${Math.max(desiredCount + 6, Math.ceil(desiredCount * 1.6))} preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las ${desiredCount} mejores válidas.
 2. Todas las preguntas deben nacer de frases COMPLETAS relacionadas directamente con el material subido: no inventes temas externos.
@@ -869,6 +978,8 @@ REGLAS OBLIGATORIAS:
 9. REGLA DE IDIOMA ESTRICTA:
    - Pregunta en español → TODAS las 4 opciones en árabe (1 correcta, 3 falsas).
    - Pregunta en árabe → TODAS las 4 opciones en español (1 correcta, 3 falsas).
+   - Pregunta auditiva → frase árabe como base y TODAS las 4 opciones en español.
+   - Pregunta gramatical → las 4 opciones deben estar en el mismo idioma entre sí.
 10. REGLA DE LONGITUD ESTRICTA PARA LAS 4 RESPUESTAS (±50%):
    - Mide cada opción en caracteres.
    - Opción correcta = referencia (X caracteres).
@@ -885,7 +996,7 @@ Formato obligatorio:
 {
   "preguntas": [
     {
-      "tipo": "traduccion",
+      "tipo": "traduccion | audio | gramatica",
       "direccion": "ar-es",
       "pregunta": "Traduce al español: ...",
       "opciones": ["...", "...", "...", "..."],
@@ -907,7 +1018,7 @@ ${context}`;
             const raw = res.choices?.[0]?.message?.content || "";
             const parsed = parseGeneratedQuestions(raw);
             const normalized = parsed
-                .map(normalizeGeneratedQuestion)
+                .map((question, index) => normalizeGeneratedQuestion(question, index, examOptions.mode))
                 .filter(q => q && q.pregunta && Array.isArray(q.opciones) && q.opciones.length === 4 && q.correcta >= 0)
                 .slice(0, desiredCount);
             if (normalized.length < desiredCount) {
@@ -1090,7 +1201,7 @@ ${context}`;
                         <div className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200">
                             {!test ? <div className="text-center text-slate-400 py-10">Genera un test para empezar.</div> : (
                                 <div className="space-y-6">{test.map((q, i) => {
-                                    const questionBody = getQuestionBody(q.pregunta);
+                                    const questionBody = q.audioText || getQuestionBody(q.pregunta);
                                     const questionIsArabic = /[؀-ۿ]/.test(questionBody);
                                     const answerState = answered[i];
                                     return (
@@ -1098,12 +1209,14 @@ ${context}`;
                                         <div className="flex items-start justify-between gap-3 mb-3">
                                             <div className="flex-1">
                                               <p className="font-bold text-slate-800">
-                                                {i+1}. {questionIsArabic ? (
+                                                {i+1}. {q.tipo === 'audio' ? (
+                                                  <><span>Escucha la frase y elige la traducción correcta: </span><button type="button" onClick={() => playSmartAudio(q.audioText || questionBody)} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-100 text-orange-800 hover:bg-orange-200 text-xs font-bold"><Volume2 className="w-4 h-4" /> Escuchar</button></>
+                                                ) : questionIsArabic ? (
                                                   <>Traduce al español: <ArabicTextWithAudio text={questionBody} className="font-arabic text-lg text-indigo-900" buttonClassName="align-middle" /></>
                                                 ) : q.pregunta}
                                               </p>
                                             </div>
-                                            <span className="shrink-0 text-[10px] uppercase font-bold px-2 py-1 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">{q.direccion === 'es-ar' ? 'ES → AR' : 'AR → ES'}</span>
+                                            <span className="shrink-0 text-[10px] uppercase font-bold px-2 py-1 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">{q.tipo === 'audio' ? 'AUDIO' : q.tipo === 'gramatica' ? 'GRAM' : q.direccion === 'es-ar' ? 'ES → AR' : 'AR → ES'}</span>
                                         </div>
                                         <div className="grid grid-cols-1 gap-2">{q.opciones.map((op, idx) => {
                                             const optionIsArabic = /[؀-ۿ]/.test(op);
