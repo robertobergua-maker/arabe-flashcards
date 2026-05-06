@@ -17,6 +17,7 @@ const removeArabicDiacritics = (text) => text ? text.replace(/[\u064B-\u065F\u06
 const normalizeForSearch = (text) => text ? text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\u064B-\u065F\u0670]/g, "") : ""; 
 const shuffleArray = (array) => { const newArray = [...array]; for (let i = newArray.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [newArray[i], newArray[j]] = [newArray[j], newArray[i]]; } return newArray; };
 const safeGetStorage = (key, fallback) => { try { const saved = localStorage.getItem(key); return saved ? JSON.parse(saved) : fallback; } catch (e) { return fallback; } };
+const setSafeStorage = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { console.warn("No se pudo guardar localmente:", e); } };
 const getCardType = (card) => { if (!card) return 'word'; if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase'; return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word'; };
 const playSmartAudio = (text) => { if (!text) return; try { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'ar-SA'; utterance.rate = 0.7; const voices = window.speechSynthesis.getVoices(); const preferredVoice = voices.find(v => v.lang.includes('ar')); if (preferredVoice) utterance.voice = preferredVoice; window.speechSynthesis.speak(utterance); } catch (e) { console.error("Audio error", e); } };
 
@@ -324,6 +325,35 @@ function isOptionLengthClose(option, reference) {
   const min = referenceLength * 0.55;
   const max = referenceLength * 1.65;
   return optionLength >= min && optionLength <= max;
+}
+
+const EXAM_LOCAL_HISTORY_KEY = 'exam_1a2_local_history';
+
+function getQuestionFingerprint(question) {
+  const body = getQuestionBody(question?.pregunta || '');
+  const answer = question?.opciones?.[question.correcta] || '';
+  return normalizeForSearch(`${question?.direccion || ''}|${body}|${answer}`).slice(0, 220);
+}
+
+function buildExamHistoryEntry(question, selectedIndex, isCorrect) {
+  return {
+    id: getQuestionFingerprint(question),
+    date: new Date().toISOString(),
+    pregunta: question.pregunta,
+    direccion: question.direccion,
+    selected: question.opciones[selectedIndex],
+    correct: question.opciones[question.correcta],
+    explicacion: question.explicacion || '',
+    fuente: question.fuente || '',
+    isCorrect
+  };
+}
+
+function addLocalExamHistoryEntry(entry) {
+  const current = safeGetStorage(EXAM_LOCAL_HISTORY_KEY, []);
+  const next = [entry, ...current].slice(0, 200);
+  setSafeStorage(EXAM_LOCAL_HISTORY_KEY, next);
+  return next;
 }
 
 function stripMarkdownNoise(text) {
@@ -634,6 +664,11 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     const [textInput, setTextInput] = useState("");
     const [priorityNotes, setPriorityNotes] = useState("");
     const [test, setTest] = useState(null);
+    const [examOptions, setExamOptions] = useState(() => safeGetStorage('exam_1a2_options', { count: 10, mode: 'mixto', difficulty: 'examen' }));
+    const [answered, setAnswered] = useState({});
+    const [localHistory, setLocalHistory] = useState(() => safeGetStorage(EXAM_LOCAL_HISTORY_KEY, []));
+
+    useEffect(() => { setSafeStorage('exam_1a2_options', examOptions); }, [examOptions]);
 
     // Cargar base de datos al inicio
     useEffect(() => {
@@ -795,11 +830,13 @@ ${priorityNotes.trim()}
     const handleGenerateTest = async () => {
         if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
         setIsProcessing(true);
+        setAnswered({});
+        const desiredCount = Number(examOptions.count) || 10;
         try {
             if (!examApiKey) {
-                const localTest = buildLocalTranslationTest(knowledge, 10);
-                if (localTest.length < 10) {
-                    throw new Error('No hay API Key y no he podido detectar al menos 10 frases completas árabe-español con distractores de longitud parecida. El administrador debe subir material con frases bilingües o añadir la API Key para generar preguntas con IA.');
+                const localTest = buildLocalTranslationTest(knowledge, desiredCount);
+                if (localTest.length < desiredCount) {
+                    throw new Error(`No hay API Key y no he podido detectar al menos ${desiredCount} frases completas árabe-español con distractores de longitud parecida. El administrador debe subir material con frases bilingües o añadir la API Key para generar preguntas con IA.`);
                 }
                 setTest(localTest);
                 return;
@@ -812,9 +849,13 @@ ${priorityNotes.trim()}
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
             const prompt = `Eres profesor de Árabe nivel A2 de EOI.
 Genera un simulacro de examen usando EXCLUSIVAMENTE la base de conocimiento subida por el usuario.
+Configuración del simulacro:
+- Número final de preguntas: ${desiredCount}
+- Modo: ${examOptions.mode}
+- Dificultad: ${examOptions.difficulty}
 
 REGLAS OBLIGATORIAS:
-1. Crea 16 preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las 10 mejores válidas.
+1. Crea ${Math.max(desiredCount + 6, Math.ceil(desiredCount * 1.6))} preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las ${desiredCount} mejores válidas.
 2. Todas las preguntas deben nacer de frases COMPLETAS relacionadas directamente con el material subido: no inventes temas externos.
 3. Usa frases completas, nunca palabras sueltas. Cada frase debe tener sujeto, verbo en presente y complemento mínimo.
 4. Si aparece "PRIORIDAD PARA EXAMEN" o notas como "muy importante" / "saldrá en examen", usa ese material PRIMERO (8 preguntas candidatas mínimo).
@@ -868,14 +909,32 @@ ${context}`;
             const normalized = parsed
                 .map(normalizeGeneratedQuestion)
                 .filter(q => q && q.pregunta && Array.isArray(q.opciones) && q.opciones.length === 4 && q.correcta >= 0)
-                .slice(0, 10);
-            if (normalized.length < 10) {
+                .slice(0, desiredCount);
+            if (normalized.length < desiredCount) {
                 console.error('Respuesta IA sin preguntas utilizables:', raw);
                 throw new Error('No se pudieron generar preguntas de calidad con el material subido. Revisa que el material guardado tenga frases completas bilingües o añade comentarios de prioridad más concretos.');
             }
             setTest(normalized);
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
+
+    const handleAnswerQuestion = (questionIndex, optionIndex) => {
+        if (!test?.[questionIndex] || answered[questionIndex]) return;
+        const question = test[questionIndex];
+        const isCorrect = optionIndex === question.correcta;
+        setAnswered(prev => ({ ...prev, [questionIndex]: { optionIndex, isCorrect } }));
+        const nextHistory = addLocalExamHistoryEntry(buildExamHistoryEntry(question, optionIndex, isCorrect));
+        setLocalHistory(nextHistory);
+    };
+
+    const clearLocalHistory = () => {
+        setSafeStorage(EXAM_LOCAL_HISTORY_KEY, []);
+        setLocalHistory([]);
+    };
+
+    const mistakes = localHistory.filter(item => !item.isCorrect);
+    const answeredValues = Object.values(answered);
+    const correctCount = answeredValues.filter(item => item.isCorrect).length;
 
     // 4. Ejercicio de escritura a mano: frase en español -> respuesta en árabe
 
@@ -983,12 +1042,57 @@ ${context}`;
                 {/* PESTAÑA 2: SIMULACRO */}
                 {activeTab === 'test' && (
                     <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up flex flex-col h-full">
-                        <button onClick={handleGenerateTest} disabled={isProcessing || knowledge.length === 0} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex justify-center items-center gap-2 text-lg mb-3 shadow-md">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <><PlayCircle className="w-6 h-6"/> Generar 10 preguntas del material subido</>}</button>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Preguntas</label>
+                                <select value={examOptions.count} onChange={(e) => setExamOptions(prev => ({ ...prev, count: Number(e.target.value) }))} className="w-full p-3 border border-slate-200 rounded-xl bg-white font-bold text-slate-700">
+                                    <option value={5}>5 rápidas</option>
+                                    <option value={10}>10 estándar</option>
+                                    <option value={20}>20 intensivo</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Modo</label>
+                                <select value={examOptions.mode} onChange={(e) => setExamOptions(prev => ({ ...prev, mode: e.target.value }))} className="w-full p-3 border border-slate-200 rounded-xl bg-white font-bold text-slate-700">
+                                    <option value="mixto">Mixto 1A2</option>
+                                    <option value="traduccion">Traducción</option>
+                                    <option value="auditivo">Auditivo</option>
+                                    <option value="gramatica">Gramática</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Dificultad</label>
+                                <select value={examOptions.difficulty} onChange={(e) => setExamOptions(prev => ({ ...prev, difficulty: e.target.value }))} className="w-full p-3 border border-slate-200 rounded-xl bg-white font-bold text-slate-700">
+                                    <option value="normal">Normal</option>
+                                    <option value="examen">Examen</option>
+                                    <option value="repaso_errores">Repaso de errores</option>
+                                </select>
+                            </div>
+                        </div>
+                        <button onClick={handleGenerateTest} disabled={isProcessing || knowledge.length === 0} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex justify-center items-center gap-2 text-lg mb-3 shadow-md">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <><PlayCircle className="w-6 h-6"/> Generar simulacro del material subido</>}</button>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+                            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+                                <p className="text-xs font-bold text-indigo-500 uppercase">Sesión actual</p>
+                                <p className="text-lg font-black text-indigo-800">{answeredValues.length}{test ? `/${test.length}` : ''} respondidas</p>
+                            </div>
+                            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
+                                <p className="text-xs font-bold text-emerald-500 uppercase">Aciertos</p>
+                                <p className="text-lg font-black text-emerald-800">{correctCount}</p>
+                            </div>
+                            <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-center justify-between gap-3">
+                                <div>
+                                    <p className="text-xs font-bold text-rose-500 uppercase">Errores locales</p>
+                                    <p className="text-lg font-black text-rose-800">{mistakes.length}</p>
+                                </div>
+                                {localHistory.length > 0 && <button onClick={clearLocalHistory} className="text-xs font-bold text-rose-700 bg-white border border-rose-200 px-3 py-2 rounded-lg hover:bg-rose-100">Vaciar</button>}
+                            </div>
+                        </div>
                         <div className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200">
                             {!test ? <div className="text-center text-slate-400 py-10">Genera un test para empezar.</div> : (
                                 <div className="space-y-6">{test.map((q, i) => {
                                     const questionBody = getQuestionBody(q.pregunta);
                                     const questionIsArabic = /[؀-ۿ]/.test(questionBody);
+                                    const answerState = answered[i];
                                     return (
                                     <div key={i} className="bg-white p-4 rounded-lg shadow-sm border border-indigo-100">
                                         <div className="flex items-start justify-between gap-3 mb-3">
@@ -1003,17 +1107,42 @@ ${context}`;
                                         </div>
                                         <div className="grid grid-cols-1 gap-2">{q.opciones.map((op, idx) => {
                                             const optionIsArabic = /[؀-ۿ]/.test(op);
+                                            const isChosen = answerState?.optionIndex === idx;
+                                            const isCorrectOption = idx === q.correcta;
+                                            let stateClass = "border-slate-200 hover:bg-indigo-50 hover:border-indigo-300";
+                                            if (answerState && isCorrectOption) stateClass = "border-emerald-400 bg-emerald-50 text-emerald-900";
+                                            if (answerState && isChosen && !isCorrectOption) stateClass = "border-rose-400 bg-rose-50 text-rose-900";
                                             return (
-                                                <button key={idx} onClick={() => alert(idx === q.correcta ? `¡Correcto! ${q.explicacion}` : `Incorrecto. ${q.explicacion || ''}`)} className={`flex items-center gap-3 p-3 border border-slate-200 rounded hover:bg-indigo-50 hover:border-indigo-300 text-sm font-medium ${optionIsArabic ? 'font-arabic text-lg text-right justify-between' : 'text-left'}`} dir={optionIsArabic ? 'rtl' : 'ltr'}>
+                                                <button key={idx} disabled={!!answerState} onClick={() => handleAnswerQuestion(i, idx)} className={`flex items-center gap-3 p-3 border rounded text-sm font-medium transition ${stateClass} ${answerState ? 'cursor-default' : 'cursor-pointer'} ${optionIsArabic ? 'font-arabic text-lg text-right justify-between' : 'text-left'}`} dir={optionIsArabic ? 'rtl' : 'ltr'}>
                                                     {optionIsArabic ? <ArabicTextWithAudio text={op} className="flex-1 justify-between" /> : <span className="flex-1">{op}</span>}
                                                 </button>
                                             );
                                         })}</div>
+                                        {answerState && (
+                                            <div className={`mt-3 p-3 rounded-lg text-sm border ${answerState.isCorrect ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-rose-50 border-rose-100 text-rose-800'}`}>
+                                                <p className="font-bold">{answerState.isCorrect ? 'Correcto' : 'Incorrecto'}</p>
+                                                <p>{q.explicacion || 'Respuesta basada en el material subido.'}</p>
+                                            </div>
+                                        )}
                                     </div>
                                     );
                                 })}</div>
                             )}
                         </div>
+                        {mistakes.length > 0 && (
+                            <div className="mt-4 bg-white border border-rose-100 rounded-xl p-4">
+                                <h3 className="font-bold text-rose-800 mb-3">Errores guardados en este navegador</h3>
+                                <div className="space-y-2 max-h-56 overflow-y-auto">
+                                    {mistakes.slice(0, 8).map((item, index) => (
+                                        <div key={`${item.id}-${item.date}-${index}`} className="text-sm bg-rose-50 border border-rose-100 rounded-lg p-3">
+                                            <p className="font-bold text-slate-800">{item.pregunta}</p>
+                                            <p className="text-rose-700">Tu respuesta: {item.selected}</p>
+                                            <p className="text-emerald-700">Correcta: {item.correct}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
                 
