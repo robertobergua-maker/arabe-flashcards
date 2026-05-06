@@ -323,30 +323,7 @@ function buildLocalTranslationTest(knowledge, desiredCount = 10) {
   });
 }
 
-function getSpanishWritingPromptFromKnowledge(knowledge) {
-  const pairs = extractStudyPairsFromKnowledge(knowledge);
-  if (!pairs || pairs.length === 0) {
-    return {
-      spanish: 'Escribe en árabe una frase sencilla en presente usando el vocabulario estudiado.',
-      arabic: '',
-      source: 'Material subido'
-    };
-  }
 
-  const validPairs = pairs.filter(pair => pair.spanish && pair.arabic);
-  const candidate = validPairs.length > 0 ? validPairs[Math.floor(Math.random() * validPairs.length)] : pairs[Math.floor(Math.random() * pairs.length)];
-  let { spanish, arabic, source } = candidate;
-
-  if (containsArabic(spanish) && !containsArabic(arabic)) {
-    [spanish, arabic] = [arabic, spanish];
-  }
-
-  if (!spanish || containsArabic(spanish)) {
-    spanish = 'Escribe en árabe una frase sencilla en presente usando el vocabulario estudiado.';
-  }
-
-  return { spanish, arabic, source };
-}
 
 
 // --- PANTALLA DE BIENVENIDA ---
@@ -565,9 +542,6 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
     const [textInput, setTextInput] = useState("");
     const [priorityNotes, setPriorityNotes] = useState("");
     const [test, setTest] = useState(null);
-    const [writingPrompt, setWritingPrompt] = useState(null);
-    const [correctionResult, setCorrectionResult] = useState("");
-    const [uploadedImage, setUploadedImage] = useState(null);
 
     // Cargar base de datos al inicio
     useEffect(() => {
@@ -579,10 +553,6 @@ function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
         if (!isAdmin && activeTab === 'knowledge') setActiveTab('test');
         if (isAdmin) setActiveTab('knowledge');
     }, [isAdmin]);
-
-    useEffect(() => {
-        if (knowledge.length > 0) setWritingPrompt(getSpanishWritingPromptFromKnowledge(knowledge));
-    }, [knowledge]);
 
     // 1. Procesar Texto Libre
     const handleProcessMaterial = async () => {
@@ -803,50 +773,7 @@ ${context}`;
     };
 
     // 4. Ejercicio de escritura a mano: frase en español -> respuesta en árabe
-    const handleCorrectExam = async (base64Image) => {
-        setUploadedImage(base64Image);
-        setCorrectionResult("");
 
-        if (!examApiKey) {
-            setCorrectionResult("Imagen subida correctamente. No hay API Key activa, así que el ejercicio queda disponible para el alumno, pero la corrección automática con visión queda pendiente. El administrador puede activarla desde el candado introduciendo la API Key.");
-            return;
-        }
-
-        setIsProcessing(true);
-        try {
-            const context = knowledge.map(k => k.content).join("\n");
-            const promptData = writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge);
-            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-            const prompt = `Eres profesor estricto pero empático de árabe (A2 EOI). Base de conocimiento: ${context}.
-Frase propuesta al alumno en español: ${promptData.spanish}
-Traducción esperada si aparece en el material: ${promptData.arabic || 'no disponible'}
-El alumno sube una respuesta escrita a mano en árabe. Lee el árabe. Corrige detalladamente: ortografía, gramática, diacríticos, trazos y adecuación a la frase española propuesta.
-Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo.`;
-            const res = await openai.chat.completions.create({
-              model: "gpt-4o",
-              messages: [{
-                role: "user",
-                content: [
-                  { type: "input_text", text: prompt },
-                  { type: "input_image", image_url: base64Image }
-                ]
-              }]
-            });
-            setCorrectionResult(res.choices[0].message.content);
-        } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
-    };
-
-    const refreshWritingPrompt = () => setWritingPrompt(getSpanishWritingPromptFromKnowledge(knowledge));
-    const handleCameraUpload = (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        handleCorrectExam(reader.result);
-        e.target.value = null;
-      };
-      reader.readAsDataURL(file);
-    };
 
     return (
         <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
@@ -864,7 +791,7 @@ Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo
             <div className="bg-white border-b flex overflow-x-auto">
                 {isAdmin && <button onClick={() => setActiveTab('knowledge')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'knowledge' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Database className="w-5 h-5"/> Admin · Conocimiento</button>}
                 <button onClick={() => setActiveTab('test')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'test' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Activity className="w-5 h-5"/> 1. Simulacro</button>
-                <button onClick={() => setActiveTab('camera')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'camera' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Camera className="w-5 h-5"/> 2. Escribir en árabe</button>
+
             </div>
             
             <div className="flex-1 p-6 max-w-4xl mx-auto w-full">
@@ -968,43 +895,7 @@ Responde: 1) Transcripción 2) Errores 3) Versión perfecta 4) Consejo de ánimo
                     </div>
                 )}
                 
-                {/* PESTAÑA 3: CÁMARA */}                {activeTab === 'camera' && (
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
-                        <h2 className="text-xl font-bold text-indigo-800 mb-2">Escritura en árabe desde frase española</h2>
-                        <p className="text-sm text-slate-500 mb-4">El alumno ve una frase en español, la escribe a mano en árabe y sube una foto de su respuesta.</p>
 
-                        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 mb-5">
-                            <div className="flex justify-between items-start gap-3 mb-2">
-                                <span className="text-xs font-bold uppercase text-amber-700">Frase para escribir en árabe</span>
-                                <button onClick={refreshWritingPrompt} disabled={knowledge.length === 0} className="text-xs font-bold text-amber-800 hover:text-amber-900 underline disabled:opacity-40">Cambiar frase</button>
-                            </div>
-                            <p className="text-2xl font-bold text-slate-800">{(writingPrompt || getSpanishWritingPromptFromKnowledge(knowledge)).spanish}</p>
-                        </div>
-
-                        <label className="relative block border-2 border-dashed border-indigo-300 bg-indigo-50 rounded-2xl p-8 text-center hover:bg-indigo-100 cursor-pointer">
-                            <input type="file" accept="image/*" capture="environment" onChange={handleCameraUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
-                            {isProcessing ? (
-                              <div className="flex flex-col items-center text-indigo-600">
-                                <Loader className="w-10 h-10 animate-spin mb-2"/>
-                                <span className="font-bold">Analizando respuesta...</span>
-                              </div>
-                            ) : (
-                              <div className="flex flex-col items-center text-indigo-600">
-                                <Upload className="w-12 h-12 mb-3 opacity-80"/>
-                                <span className="font-bold text-lg">Subir foto de la frase escrita en árabe</span>
-                                <span className="text-xs text-indigo-500 mt-2">Toca aquí para seleccionar una imagen o abrir la cámara.</span>
-                                <span className="text-xs text-indigo-500 mt-1">No hace falta API Key para subir la respuesta; la corrección automática solo se activa si existe API Key.</span>
-                              </div>
-                            )}
-                        </label>
-                        {uploadedImage && !isProcessing && (
-                            <div className="mt-8 border-t pt-6 flex flex-col md:flex-row gap-4 items-start">
-                                <img src={uploadedImage} alt="Respuesta escrita" className="w-full md:w-48 object-cover rounded-lg border shadow-sm" />
-                                <div className="flex-1 bg-green-50 p-4 rounded-xl border border-green-200 text-sm text-slate-700 whitespace-pre-wrap">{correctionResult || "Respuesta subida."}</div>
-                            </div>
-                        )}
-                    </div>
-                )}
             </div>
         </div>
     );
