@@ -551,23 +551,42 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
         </div>
         {isHelpOpen && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full border border-slate-200 overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
               <div className="bg-emerald-700 text-white px-5 py-4 flex items-center justify-between">
                 <h2 className="font-bold flex items-center gap-2"><HelpCircle className="w-5 h-5" /> Ayuda de Lamadrasa</h2>
                 <button onClick={() => setIsHelpOpen(false)} className="p-1 rounded-full hover:bg-white/20"><X className="w-5 h-5" /></button>
               </div>
-              <div className="p-5 text-left text-sm text-slate-600 space-y-4">
+              <div className="p-5 text-left text-sm text-slate-600 space-y-5 overflow-y-auto">
                 <div>
                   <p className="font-bold text-slate-800">Repaso de vocabulario</p>
-                  <p>Practica tarjetas español-árabe, escucha la pronunciación, oculta o muestra vocales y filtra por pistas o categorías.</p>
+                  <p>Sirve para estudiar las tarjetas una a una. Puedes buscar por texto, filtrar por pista o categoría y cambiar qué idioma aparece primero. Al pulsar una tarjeta cambia de cara: español, árabe y fonética.</p>
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800">Iconos y controles del vocabulario</p>
+                  <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <p className="flex gap-2"><Search className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Buscar:</b> localiza tarjetas por español o árabe.</span></p>
+                    <p className="flex gap-2"><Filter className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Filtro:</b> muestra solo una pista o categoría.</span></p>
+                    <p className="flex gap-2"><Gamepad2 className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Juegos:</b> abre escucha, quiz, memoria y velocidad.</span></p>
+                    <p className="flex gap-2"><Baseline className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Vocales:</b> muestra u oculta harakat/diacríticos árabes.</span></p>
+                    <p className="flex gap-2"><span className="font-black text-xs bg-slate-100 px-1.5 py-0.5 rounded">ES</span> <span><b>ES:</b> enseña primero el español.</span></p>
+                    <p className="flex gap-2"><span className="font-black text-xs bg-slate-100 px-1.5 py-0.5 rounded">AR</span> <span><b>AR:</b> enseña primero el árabe.</span></p>
+                    <p className="flex gap-2"><Volume2 className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Audio:</b> reproduce la frase o palabra árabe.</span></p>
+                    <p className="flex gap-2"><Lock className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Candado:</b> activa el modo administrador.</span></p>
+                    <p className="flex gap-2"><Edit2 className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Editar:</b> modifica una tarjeta en modo admin.</span></p>
+                    <p className="flex gap-2"><Trash2 className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Borrar:</b> elimina una tarjeta en modo admin.</span></p>
+                  </div>
                 </div>
                 <div>
                   <p className="font-bold text-slate-800">Juegos</p>
-                  <p>Usa ejercicios rápidos de escucha, memoria, quiz y velocidad para reforzar vocabulario sin hacer un simulacro completo.</p>
+                  <p>Son ejercicios cortos para automatizar vocabulario: escuchar y reconocer, elegir la traducción correcta, emparejar tarjetas o responder rápido antes de que acabe el tiempo.</p>
                 </div>
                 <div>
                   <p className="font-bold text-slate-800">Preparación Examen 1A2</p>
-                  <p>Genera simulacros desde el material subido. Traducción practica frases; Auditivo obliga a escuchar árabe; Gramática pregunta por estructuras como presente, negación, pronombres, demostrativos, posesión y concordancia.</p>
+                  <p>Genera simulacros desde el material subido por el administrador. Puedes elegir cantidad de preguntas y modo: traducción de frases, audio con frase árabe escuchada, gramática A2 o mixto.</p>
+                </div>
+                <div>
+                  <p className="font-bold text-slate-800">Modo gramática</p>
+                  <p>No busca traducir una frase completa. Pregunta por la forma correcta de una estructura: pronombre sufijado, demostrativo, negación, posesión, concordancia, presente, anexión o partículas de lugar, siempre a partir de patrones del material.</p>
                 </div>
                 <div>
                   <p className="font-bold text-slate-800">Errores locales</p>
