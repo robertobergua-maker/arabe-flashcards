@@ -190,16 +190,34 @@ function normalizeGeneratedQuestion(question, index) {
   if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = finalOpciones.indexOf(String(rawOpciones[0] || '').trim());
   if (!Number.isInteger(correcta) || correcta < 0 || correcta >= finalOpciones.length) correcta = 0;
   const direccion = safeQuestion.direccion || safeQuestion.direction || (Math.random() > 0.5 ? 'ar-es' : 'es-ar');
-  // Validar idioma de opciones basado en dirección: ar-es -> opciones en español, es-ar -> opciones en árabe
-  const expectedArabicOptions = direccion === 'es-ar'; // Si es-ar, opciones en árabe; si ar-es, en español
-  const filteredOpciones = finalOpciones.filter(opt => containsArabic(opt) === expectedArabicOptions);
-  const correctedOpciones = filteredOpciones.length >= 4 ? filteredOpciones.slice(0, 4) : finalOpciones.slice(0, 4); // Fallback si no se puede filtrar
+  const expectedArabicOptions = direccion === 'es-ar';
+  let filteredOpciones = finalOpciones.filter(opt => containsArabic(opt) === expectedArabicOptions);
+  
+  if (filteredOpciones.length < 4) {
+    filteredOpciones = finalOpciones.slice(0, 4);
+  }
+  
+  // Validar longitud similar de opciones (±50% de la respuesta correcta)
+  const correctaLength = filteredOpciones[correcta]?.length || 10;
+  const filteredByLength = filteredOpciones.filter((opt, idx) => {
+    if (idx === correcta) return true;
+    const diff = Math.abs(opt.length - correctaLength);
+    return diff / correctaLength <= 0.5;
+  });
+  
+  const correctedOpciones = filteredByLength.length >= 4
+    ? filteredByLength.slice(0, 4)
+    : filteredOpciones.slice(0, 4);
+  
+  const newCorrectaIndex = correctedOpciones.findIndex((opt) => opt === filteredOpciones[correcta]);
+  const finalCorrecta = newCorrectaIndex >= 0 ? newCorrectaIndex : Math.min(correcta, correctedOpciones.length - 1);
+  
   return {
     tipo: safeQuestion.tipo || safeQuestion.type || 'traduccion',
     direccion,
     pregunta: safeQuestion.pregunta || safeQuestion.question || `Pregunta ${index + 1}`,
     opciones: correctedOpciones,
-    correcta: Math.min(correcta, correctedOpciones.length - 1),
+    correcta: finalCorrecta,
     explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en el material subido.',
     fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
   };
@@ -295,32 +313,40 @@ function buildLocalTranslationTest(knowledge, desiredCount = 10) {
   if (pairs.length === 0) return [];
 
   const shuffledPairs = shuffleArray(pairs);
-  const selected = Array.from({ length: desiredCount }, (_, index) => shuffledPairs[index % shuffledPairs.length]);
-  return selected.map((pair) => {
-    const direction = Math.random() > 0.5 ? 'ar-es' : 'es-ar';
-    const correctText = direction === 'ar-es' ? pair.spanish : pair.arabic;
-    const distractorPool = pairs
-      .filter(p => p !== pair)
-      .map(p => direction === 'ar-es' ? p.spanish : p.arabic)
-      .filter(Boolean);
+  const arEsCount = Math.ceil(desiredCount / 2);
+  const esArCount = desiredCount - arEsCount;
+  
+  const arEsQuestions = shuffledPairs.slice(0, arEsCount).map((pair) => {
+    const correctText = pair.spanish;
+    const distractorPool = pairs.filter(p => p !== pair).map(p => p.spanish).filter(Boolean);
     const uniqueDistractors = Array.from(new Set(shuffleArray(distractorPool)));
-    // Filtrar distractores con longitud similar (±50% de la correcta)
     const correctLength = correctText.length;
     const similarDistractors = uniqueDistractors.filter(d => Math.abs(d.length - correctLength) / correctLength <= 0.5);
     const distractors = similarDistractors.slice(0, 3);
-    while (distractors.length < 3) distractors.push(direction === 'ar-es' ? 'No corresponde al material' : 'إجابة غير صحيحة');
-
+    while (distractors.length < 3) {
+      const fallback = correctText.substring(0, Math.max(1, correctText.length - 3)) + '...';
+      distractors.push(distractors.includes(fallback) ? 'Otra respuesta' : fallback);
+    }
     const opciones = shuffleArray([correctText, ...distractors]).slice(0, 4);
-    return {
-      tipo: 'traduccion',
-      direccion: direction,
-      pregunta: direction === 'ar-es' ? `Traduce al español: ${pair.arabic}` : `Traduce al árabe: ${pair.spanish}`,
-      opciones,
-      correcta: opciones.indexOf(correctText),
-      explicacion: 'Pregunta generada localmente a partir de pares árabe-español detectados en el material subido.',
-      fuente: pair.source
-    };
+    return { tipo: 'traduccion', direccion: 'ar-es', pregunta: `Traduce al español: ${pair.arabic}`, opciones, correcta: opciones.indexOf(correctText), explicacion: `Frase del material: "${pair.arabic}"`, fuente: pair.source };
   });
+
+  const esArQuestions = shuffledPairs.slice(arEsCount, arEsCount + esArCount).map((pair) => {
+    const correctText = pair.arabic;
+    const distractorPool = pairs.filter(p => p !== pair).map(p => p.arabic).filter(Boolean);
+    const uniqueDistractors = Array.from(new Set(shuffleArray(distractorPool)));
+    const correctLength = correctText.length;
+    const similarDistractors = uniqueDistractors.filter(d => Math.abs(d.length - correctLength) / correctLength <= 0.5);
+    const distractors = similarDistractors.slice(0, 3);
+    while (distractors.length < 3) {
+      const fallback = correctText.substring(0, Math.max(1, correctText.length - 3)) + '...';
+      distractors.push(distractors.includes(fallback) ? 'إجابة أخرى' : fallback);
+    }
+    const opciones = shuffleArray([correctText, ...distractors]).slice(0, 4);
+    return { tipo: 'traduccion', direccion: 'es-ar', pregunta: `Traduce al árabe: ${pair.spanish}`, opciones, correcta: opciones.indexOf(correctText), explicacion: `Frase del material: "${pair.spanish}"`, fuente: pair.source };
+  });
+
+  return shuffleArray([...arEsQuestions, ...esArQuestions]).slice(0, desiredCount);
 }
 
 
@@ -723,19 +749,26 @@ Genera un simulacro de examen usando EXCLUSIVAMENTE la base de conocimiento subi
 
 REGLAS OBLIGATORIAS:
 1. Crea exactamente 10 preguntas dentro de la propiedad "preguntas".
-2. Todas las preguntas deben nacer del material subido: frases, vocabulario, estructuras o ejemplos que aparezcan en la base.
-3. Si aparece una sección "PRIORIDAD PARA EXAMEN" o notas como "esto es muy importante" / "esto saldrá en el examen", usa ese material antes que el resto.
+2. Todas las preguntas deben nacer de frases COMPLETAS del material subido: no inventes, extrae literalmente.
+3. Si aparece "PRIORIDAD PARA EXAMEN" o notas como "muy importante" / "saldrá en examen", usa ese material PRIMERO (5 preguntas mínimo).
 4. Usa siempre verbos en tiempo PRESENTE. No uses pasado, futuro, condicional ni imperativo.
-5. Alterna traducción árabe → español y español → árabe, empezando aleatoriamente.
-6. Cada pregunta debe ser una frase completa, no palabras sueltas.
-7. Incluye exactamente 4 opciones por pregunta. Solo una opción es correcta.
-8. Si la pregunta está en español, TODAS las 4 opciones deben estar en árabe (una correcta). Si la pregunta está en árabe, TODAS las opciones en español.
-9. Las opciones incorrectas deben ser verosímiles y de nivel A2, con longitud similar (±50%) a la respuesta correcta.
-10. La explicación debe indicar brevemente qué parte del material justifica la respuesta.
-11. Si faltan frases completas en el material, construye frases simples en presente usando SOLO vocabulario y estructuras del material. Marca la explicación como "frase construida con material insuficiente".
-12. No devuelvas texto fuera del JSON.
+5. ALTERNANCIA OBLIGATORIA: 5 preguntas árabe→español, 5 preguntas español→árabe. Distribuye aleatoriamente.
+6. Cada pregunta debe contener 1 frase completa (sujeto + verbo + complemento mínimo). No palabras sueltas.
+7. Incluye exactamente 4 opciones por pregunta. Solo 1 opción es correcta.
+8. REGLA DE IDIOMA ESTRICTA:
+   - Pregunta en español → TODAS las 4 opciones en árabe (1 correcta, 3 falsas).
+   - Pregunta en árabe → TODAS las 4 opciones en español (1 correcta, 3 falsas).
+9. REGLA DE LONGITUD ESTRICTA (±50%):
+   - Mide cada opción en caracteres.
+   - Opción correcta = referencia (X caracteres).
+   - Opciones falsas deben estar entre X*0.5 y X*1.5 caracteres.
+   - Si una opción no cumple, reemplazarla con sinonimia de longitud similar.
+10. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
+11. Explicación: cite literalmente la frase del material que justifica la respuesta, formato: "Frase del material: [cita literal]"
+12. Si necesitas variante de frase, marca: "[Variante del material: frase base original]"
+13. JSON únicamente, sin texto extra.
 
-Formato obligatorio de salida:
+Formato obligatorio:
 {
   "preguntas": [
     {
@@ -750,7 +783,7 @@ Formato obligatorio de salida:
   ]
 }
 
-BASE DE CONOCIMIENTO SUBIDA:
+BASE DE CONOCIMIENTO:
 ${context}`;
             const res = await openai.chat.completions.create({
                 model: "gpt-4o",
@@ -884,7 +917,17 @@ ${context}`;
                                 <div className="space-y-6">{test.map((q, i) => (
                                     <div key={i} className="bg-white p-4 rounded-lg shadow-sm border border-indigo-100">
                                         <div className="flex items-start justify-between gap-3 mb-3">
-                                            <p className="font-bold text-slate-800">{i+1}. {q.pregunta}</p>
+                                            <div className="flex-1">
+                                              <p className="font-bold text-slate-800">{i+1}. {q.pregunta}</p>
+                                              {/[؀-ۿ]/.test(q.pregunta) && (
+                                                <button
+                                                  onClick={() => playSmartAudio(q.pregunta.replace(/^Traduce al español: /, ''))}
+                                                  className="mt-2 px-3 py-1 bg-orange-500 text-white rounded text-xs font-bold hover:bg-orange-600 flex items-center gap-1"
+                                                >
+                                                  <Volume2 className="w-3 h-3" /> Escuchar
+                                                </button>
+                                              )}
+                                            </div>
                                             <span className="shrink-0 text-[10px] uppercase font-bold px-2 py-1 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">{q.direccion === 'es-ar' ? 'ES → AR' : 'AR → ES'}</span>
                                         </div>
                                         <div className="grid grid-cols-1 gap-2">{q.opciones.map((op, idx) => ( <button key={idx} onClick={() => alert(idx === q.correcta ? `¡Correcto! ${q.explicacion}` : `Incorrecto. ${q.explicacion || ''}`)} className={`text-left p-3 border border-slate-200 rounded hover:bg-indigo-50 hover:border-indigo-300 text-sm font-medium ${/[؀-ۿ]/.test(op) ? 'font-arabic text-lg text-right' : ''}`} dir={/[؀-ۿ]/.test(op) ? 'rtl' : 'ltr'}>{op}</button> ))}</div>
