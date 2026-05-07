@@ -379,11 +379,25 @@ function isOptionLengthClose(option, reference) {
 }
 
 const EXAM_LOCAL_HISTORY_KEY = 'exam_1a2_local_history';
+const EXAM_RECENT_QUESTIONS_KEY = 'exam_1a2_recent_questions';
 
 function getQuestionFingerprint(question) {
   const body = question?.audioText || getQuestionBody(question?.pregunta || '');
   const answer = question?.opciones?.[question.correcta] || '';
   return normalizeForSearch(`${question?.direccion || ''}|${body}|${answer}`).slice(0, 220);
+}
+
+function rememberRecentExamQuestions(questions) {
+  const current = safeGetStorage(EXAM_RECENT_QUESTIONS_KEY, []);
+  const next = [
+    ...questions.map(getQuestionFingerprint),
+    ...current
+  ].filter(Boolean);
+  setSafeStorage(EXAM_RECENT_QUESTIONS_KEY, [...new Set(next)].slice(0, 80));
+}
+
+function getRecentQuestionHints() {
+  return safeGetStorage(EXAM_RECENT_QUESTIONS_KEY, []).slice(0, 20);
 }
 
 function buildExamHistoryEntry(question, selectedIndex, isCorrect) {
@@ -981,6 +995,7 @@ ${priorityNotes.trim()}
         setAnswered({});
         const desiredCount = Number(examOptions.count) || 10;
         const mode = examOptions.mode || 'mixto';
+        const recentQuestionHints = getRecentQuestionHints();
         try {
             if (!examApiKey) {
                 if (mode === 'gramatica') {
@@ -990,11 +1005,14 @@ ${priorityNotes.trim()}
                 if (localTest.length < desiredCount) {
                     throw new Error(`No hay API Key y no he podido detectar al menos ${desiredCount} frases completas árabe-español con distractores de longitud parecida. El administrador debe subir material con frases bilingües o añadir la API Key para generar preguntas con IA.`);
                 }
+                rememberRecentExamQuestions(localTest);
                 setTest(localTest);
                 return;
             }
 
-            const context = knowledge
+            const prioritizedKnowledge = knowledge.filter(k => /prioritario|prioridad|importante|examen/i.test(`${k.category || ''}\n${k.content || ''}`));
+            const regularKnowledge = knowledge.filter(k => !prioritizedKnowledge.includes(k));
+            const context = [...shuffleArray(prioritizedKnowledge), ...shuffleArray(regularKnowledge)]
                 .map(k => `FUENTE: ${k.category || 'Material subido'}\n${k.content}`)
                 .join("\n\n---\n\n")
                 .slice(0, 45000);
@@ -1056,6 +1074,7 @@ Configuración del simulacro:
 - Número final de preguntas: ${desiredCount}
 - Modo: ${examOptions.mode}
 - Dificultad: ${examOptions.difficulty}
+- Preguntas recientes a evitar: ${recentQuestionHints.length ? recentQuestionHints.join(' | ') : 'ninguna'}
 
 ${modeRules}
 
@@ -1065,29 +1084,31 @@ REGLAS OBLIGATORIAS:
 3. En traducción y audio, usa frases completas, nunca palabras sueltas. En gramática, puedes usar huecos o formas cortas si sirven para evaluar la estructura.
 4. Si aparece "PRIORIDAD PARA EXAMEN" o notas como "muy importante" / "saldrá en examen", usa ese material PRIMERO (8 preguntas candidatas mínimo).
 5. Prioriza verbos en presente salvo que el material de clase pida expresamente otra estructura A2.
-6. DIRECCIÓN COHERENTE:
+6. Evita repetir preguntas recientes, frases base recientes y respuestas correctas recientes cuando haya material alternativo suficiente.
+7. Varía fuentes, temas y estructuras: no concentres todo el simulacro en la misma página, lista o ejemplo.
+8. DIRECCIÓN COHERENTE:
    - Para "direccion": "ar-es", la pregunta debe ser una frase en ÁRABE y las 4 opciones deben estar en ESPAÑOL.
    - Para "direccion": "es-ar", la pregunta debe ser una frase en ESPAÑOL y las 4 opciones deben estar en ÁRABE.
    - Para "direccion": "GRAM → AR" o "GRAM → ES", aplica solo a preguntas de gramática.
-7. El texto de "pregunta" debe empezar exactamente por "Traduce al español: " o "Traduce al árabe: " según corresponda.
+9. El texto de "pregunta" debe empezar exactamente por "Traduce al español: " o "Traduce al árabe: " según corresponda.
    Excepción: tipo "audio" y tipo "gramatica" no deben empezar por "Traduce".
-8. Incluye exactamente 4 opciones por pregunta. Solo 1 opción es correcta.
-9. REGLA DE IDIOMA ESTRICTA:
+10. Incluye exactamente 4 opciones por pregunta. Solo 1 opción es correcta.
+11. REGLA DE IDIOMA ESTRICTA:
    - Pregunta en español → TODAS las 4 opciones en árabe (1 correcta, 3 falsas).
    - Pregunta en árabe → TODAS las 4 opciones en español (1 correcta, 3 falsas).
    - Pregunta auditiva → frase árabe como base y TODAS las 4 opciones en español.
    - Pregunta gramatical → las 4 opciones deben estar en el mismo idioma entre sí.
-10. REGLA DE LONGITUD ESTRICTA PARA LAS 4 RESPUESTAS (±50%):
+12. REGLA DE LONGITUD ESTRICTA PARA LAS 4 RESPUESTAS (±50%):
    - Mide cada opción en caracteres.
    - Opción correcta = referencia (X caracteres).
    - Opciones falsas deben estar entre X*0.5 y X*1.5 caracteres.
    - Si una opción no cumple, reemplázala por otra frase del material de longitud similar.
-11. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
-12. Las opciones también deben ser frases, no sustantivos aislados, lecciones, etiquetas, números ni títulos.
-13. No incluyas etiquetas ni metadatos en preguntas u opciones: elimina "Ejemplo:", "Fonética:", transcripciones latinas entre paréntesis y números de lección.
-14. Explicación: cita la frase del material que justifica la respuesta, formato: "Frase del material: [cita]"
-15. Si necesitas variante de frase, marca: "[Variante del material: frase base original]"
-16. JSON únicamente, sin texto extra.
+13. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
+14. Las opciones también deben ser frases, no sustantivos aislados, lecciones, etiquetas, números ni títulos.
+15. No incluyas etiquetas ni metadatos en preguntas u opciones: elimina "Ejemplo:", "Fonética:", transcripciones latinas entre paréntesis y números de lección.
+16. Explicación: cita la frase del material que justifica la respuesta, formato: "Frase del material: [cita]"
+17. Si necesitas variante de frase, marca: "[Variante del material: frase base original]"
+18. JSON únicamente, sin texto extra.
 
 Formato obligatorio:
 ${formatExample}
@@ -1097,7 +1118,7 @@ ${context}`;
             const res = await openai.chat.completions.create({
                 model: "gpt-4o",
                 messages: [{ role: "user", content: prompt }],
-                temperature: 0.15,
+                temperature: 0.45,
                 response_format: { type: "json_object" }
             });
             const raw = res.choices?.[0]?.message?.content || "";
@@ -1105,12 +1126,14 @@ ${context}`;
             const normalized = parsed
                 .map((question, index) => normalizeGeneratedQuestion(question, index, examOptions.mode))
                 .filter(q => q && q.pregunta && Array.isArray(q.opciones) && q.opciones.length === 4 && q.correcta >= 0)
-                .slice(0, desiredCount);
-            if (normalized.length < desiredCount) {
+                .filter(q => !recentQuestionHints.includes(getQuestionFingerprint(q)));
+            const selectedQuestions = shuffleArray(normalized).slice(0, desiredCount);
+            if (selectedQuestions.length < desiredCount) {
                 console.error('Respuesta IA sin preguntas utilizables:', raw);
                 throw new Error('No se pudieron generar preguntas de calidad con el material subido. Revisa que el material guardado tenga frases completas bilingües o añade comentarios de prioridad más concretos.');
             }
-            setTest(normalized);
+            rememberRecentExamQuestions(selectedQuestions);
+            setTest(selectedQuestions);
         } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
     };
 
