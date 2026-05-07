@@ -1138,7 +1138,8 @@ ${priorityNotes.trim()}
   ]
 }`;
             const prompt = `Eres profesor de Árabe nivel A2 de EOI.
-Genera un simulacro de examen usando EXCLUSIVAMENTE la base de conocimiento subida por el usuario.
+Actúa como profesor/a de árabe estándar moderno para estudiantes de nivel inicial A1-A2.
+Tu tarea es crear preguntas de simulacro y frases con sentido usando el vocabulario y estructuras de la base de conocimiento subida por el usuario.
 Configuración del simulacro:
 - Número final de preguntas: ${desiredCount}
 - Modo: ${examOptions.mode}
@@ -1147,9 +1148,25 @@ Configuración del simulacro:
 
 ${modeRules}
 
-REGLAS OBLIGATORIAS:
+REGLAS BASE PARA CREAR FRASES Y RESPUESTAS:
+1. Usa exclusivamente o principalmente el vocabulario facilitado en la base de conocimiento.
+2. Crea frases naturales, sencillas y útiles para un examen de nivel inicial.
+3. Usa siempre verbos en presente cuando uses verbos.
+4. No uses pasado, futuro, condicional ni imperativo.
+5. No inventes vocabulario difícil si no es necesario.
+6. Mantén estructuras gramaticales simples.
+7. Las frases deben tener sentido real, no ser combinaciones aleatorias de palabras.
+8. Usa frases breves: entre 4 y 9 palabras aproximadamente.
+9. Incluye variedad de frases afirmativas, negativas e interrogativas.
+10. Usa, cuando sea posible: demostrativos هذا، هذه، ذلك، تلك; pronombres personales; posesivos sencillos; nombres comunes; adjetivos básicos; lugares y objetos cotidianos.
+11. Escribe el árabe con signos diacríticos cuando sea útil para estudiantes principiantes.
+12. Añade siempre traducción al español cuando la respuesta correcta esté en español o cuando la explicación lo necesite.
+13. No incluyas explicaciones largas.
+14. No generes frases absurdas o artificiales.
+
+REGLAS TÉCNICAS DEL TEST:
 1. Crea ${candidateCount} preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las ${desiredCount} mejores válidas.
-2. Todas las preguntas deben nacer de frases COMPLETAS relacionadas directamente con el material subido: no inventes temas externos.
+2. Todas las preguntas deben nacer del vocabulario, frases o estructuras del material subido. Puedes crear frases nuevas si usan ese vocabulario de forma natural.
 3. En traducción y audio, usa frases completas, nunca palabras sueltas. En gramática, puedes usar huecos o formas cortas si sirven para evaluar la estructura.
 4. Si aparece "PRIORIDAD PARA EXAMEN" o notas como "muy importante" / "saldrá en examen", usa ese material PRIMERO (8 preguntas candidatas mínimo).
 5. Prioriza verbos en presente salvo que el material de clase pida expresamente otra estructura A2.
@@ -1177,8 +1194,8 @@ REGLAS OBLIGATORIAS:
 15. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
 16. Las opciones también deben ser frases, no sustantivos aislados, lecciones, etiquetas, números ni títulos.
 17. No incluyas etiquetas ni metadatos en preguntas u opciones: elimina "Ejemplo:", "Fonética:", transcripciones latinas entre paréntesis y números de lección.
-18. Explicación: cita la frase del material que justifica la respuesta, formato: "Frase del material: [cita]"
-19. Si necesitas variante de frase, marca: "[Variante del material: frase base original]"
+18. Explicación breve: cita la frase o vocabulario base del material cuando exista, formato: "Base del material: [cita o vocabulario]".
+19. Si creas una frase nueva con vocabulario del material, marca: "[Frase creada con vocabulario del material: palabras base]".
 20. JSON únicamente, sin texto extra.
 
 Formato obligatorio:
@@ -1194,14 +1211,18 @@ ${context}`;
             });
             const raw = res.choices?.[0]?.message?.content || "";
             const parsed = parseGeneratedQuestions(raw);
-            const normalized = parsed
+            const allValid = parsed
                 .map((question, index) => normalizeGeneratedQuestion(question, index, examOptions.mode))
-                .filter(q => q && q.pregunta && Array.isArray(q.opciones) && q.opciones.length === 4 && q.correcta >= 0)
-                .filter(q => !recentQuestionHints.includes(getQuestionFingerprint(q)));
-            const selectedQuestions = diversifyExamQuestions(normalized, desiredCount);
+                .filter(q => q && q.pregunta && Array.isArray(q.opciones) && q.opciones.length === 4 && q.correcta >= 0);
+            const freshValid = allValid.filter(q => !recentQuestionHints.includes(getQuestionFingerprint(q)));
+            const selectedFresh = diversifyExamQuestions(freshValid, desiredCount);
+            const fallbackPool = allValid.filter(q => !selectedFresh.some(selected => getQuestionFingerprint(selected) === getQuestionFingerprint(q)));
+            const selectedQuestions = selectedFresh.length >= desiredCount
+                ? selectedFresh
+                : [...selectedFresh, ...diversifyExamQuestions(fallbackPool, desiredCount - selectedFresh.length)];
             if (selectedQuestions.length < desiredCount) {
                 console.error('Respuesta IA sin preguntas utilizables:', raw);
-                throw new Error('No se pudieron generar preguntas de calidad con el material subido. Revisa que el material guardado tenga frases completas bilingües o añade comentarios de prioridad más concretos.');
+                throw new Error(`Solo se pudieron generar ${selectedQuestions.length} preguntas válidas. Prueba con menos preguntas o un modo distinto.`);
             }
             rememberRecentExamQuestions(selectedQuestions);
             setTest(selectedQuestions);
