@@ -252,9 +252,7 @@ function normalizeGeneratedQuestion(question, index, mode = 'traduccion') {
   const cuerpoPregunta = getQuestionBody(preguntaOriginal);
   const preguntaEsArabe = containsArabic(cuerpoPregunta);
   const direccion = preguntaEsArabe ? 'ar-es' : 'es-ar';
-  const pregunta = direccion === 'ar-es'
-    ? `Traduce al español: ${cuerpoPregunta}`
-    : `Traduce al árabe: ${cuerpoPregunta}`;
+  const pregunta = buildTranslationQuestionText(cuerpoPregunta, direccion);
   const respuestaCorrecta = cleanExamPhrase(rawOpciones[correcta]);
 
   if (!isLikelyPhrase(cuerpoPregunta, preguntaEsArabe)) return null;
@@ -329,8 +327,28 @@ function getQuestionBody(questionText) {
     .replace(/^Traduce\s+al\s+español\s*:\s*/i, '')
     .replace(/^Traduce\s+al\s+árabe\s*:\s*/i, '')
     .replace(/^Traduce\s+al\s+arabe\s*:\s*/i, '')
+    .replace(/^¿Qué\s+significa\s+en\s+español\s*:\s*/i, '')
+    .replace(/^Elige\s+la\s+traducción\s+correcta\s+en\s+español\s*:\s*/i, '')
+    .replace(/^Marca\s+la\s+opción\s+que\s+traduce\s+esta\s+frase\s*:\s*/i, '')
+    .replace(/^¿Cómo\s+se\s+dice\s+en\s+árabe\s*:\s*/i, '')
+    .replace(/^Elige\s+la\s+frase\s+árabe\s+correcta\s+para\s*:\s*/i, '')
     .replace(/^Escucha[^:]*:\s*/i, '')
     .trim());
+}
+
+function buildTranslationQuestionText(body, direction) {
+  const arEsPrompts = [
+    `Traduce al español: ${body}`,
+    `¿Qué significa en español: ${body}`,
+    `Elige la traducción correcta en español: ${body}`,
+    `Marca la opción que traduce esta frase: ${body}`
+  ];
+  const esArPrompts = [
+    `Traduce al árabe: ${body}`,
+    `¿Cómo se dice en árabe: ${body}`,
+    `Elige la frase árabe correcta para: ${body}`
+  ];
+  return shuffleArray(direction === 'ar-es' ? arEsPrompts : esArPrompts)[0];
 }
 
 function cleanExamPhrase(text) {
@@ -376,6 +394,53 @@ function isOptionLengthClose(option, reference) {
   const min = referenceLength * 0.55;
   const max = referenceLength * 1.65;
   return optionLength >= min && optionLength <= max;
+}
+
+function getQuestionKeywords(question) {
+  return normalizeForSearch(`${question?.audioText || ''} ${question?.pregunta || ''} ${question?.opciones?.[question.correcta] || ''}`)
+    .split(/\s+/)
+    .filter(token => token.length > 3)
+    .slice(0, 14);
+}
+
+function diversifyExamQuestions(questions, desiredCount) {
+  const pool = shuffleArray(questions);
+  const selected = [];
+  const usedSources = new Map();
+  const usedTypes = new Map();
+  const usedDirections = new Map();
+  const usedKeywords = new Set();
+
+  while (selected.length < desiredCount && pool.length > 0) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+
+    pool.forEach((question, index) => {
+      const keywords = getQuestionKeywords(question);
+      const repeatedKeywords = keywords.filter(keyword => usedKeywords.has(keyword)).length;
+      const sourceCount = usedSources.get(question.fuente || '') || 0;
+      const typeCount = usedTypes.get(question.tipo || '') || 0;
+      const directionCount = usedDirections.get(question.direccion || '') || 0;
+      const score = Math.random()
+        - sourceCount * 2.2
+        - repeatedKeywords * 1.4
+        - typeCount * 0.35
+        - directionCount * 0.25;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = index;
+      }
+    });
+
+    const [chosen] = pool.splice(bestIndex, 1);
+    selected.push(chosen);
+    usedSources.set(chosen.fuente || '', (usedSources.get(chosen.fuente || '') || 0) + 1);
+    usedTypes.set(chosen.tipo || '', (usedTypes.get(chosen.tipo || '') || 0) + 1);
+    usedDirections.set(chosen.direccion || '', (usedDirections.get(chosen.direccion || '') || 0) + 1);
+    getQuestionKeywords(chosen).forEach(keyword => usedKeywords.add(keyword));
+  }
+
+  return selected;
 }
 
 const EXAM_LOCAL_HISTORY_KEY = 'exam_1a2_local_history';
@@ -1017,13 +1082,14 @@ ${priorityNotes.trim()}
                 .join("\n\n---\n\n")
                 .slice(0, 45000);
             const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-            const candidateCount = Math.max(desiredCount + 6, Math.ceil(desiredCount * 1.6));
+            const candidateCount = Math.max(32, desiredCount * 4);
             const modeRules = mode === 'gramatica'
                 ? `MODO GRAMÁTICA:
 - Genera SOLO preguntas de tipo "gramatica".
 - No hagas traducciones directas.
 - Pregunta por estructuras A2 del material: presente, negación, pronombres personales, pronombres sufijados, demostrativos, posesión, concordancia, género/número, anexión y partículas de lugar.
 - Usa formatos como completar hueco, elegir la forma correcta, detectar la frase correcta o elegir la explicación gramatical correcta.
+- Alterna formatos: hueco, forma correcta, error a detectar, concordancia, elección de partícula y transformación breve.
 - Las 4 opciones deben tener el mismo tipo y el mismo idioma entre sí.
 - La explicación debe indicar la regla o patrón del material.`
                 : mode === 'auditivo'
@@ -1031,16 +1097,19 @@ ${priorityNotes.trim()}
 - Genera SOLO preguntas de tipo "audio".
 - En "pregunta" escribe SOLO una frase árabe completa del material, sin "Traduce..." ni texto introductorio.
 - Las 4 opciones deben ser traducciones completas en español.
-- El usuario escuchará la frase árabe y elegirá la traducción correcta.`
+- El usuario escuchará la frase árabe y elegirá la traducción correcta.
+- Varía longitud, tema y fuente de las frases árabes.`
                   : mode === 'traduccion'
                     ? `MODO TRADUCCIÓN:
 - Genera SOLO preguntas de tipo "traduccion".
 - Mezcla árabe→español y español→árabe.
-- Cada pregunta debe pedir traducir una frase completa del material.`
+- Cada pregunta debe pedir traducir una frase completa del material.
+- Varía el enunciado: "Traduce...", "¿Qué significa...?", "¿Cómo se dice...?", "Elige la frase...".`
                     : `MODO MIXTO:
 - Mezcla preguntas de tipo "traduccion", "audio" y "gramatica".
 - Aproximadamente un tercio de cada tipo si el material lo permite.
-- Traducción practica frases completas; audio usa frase árabe escuchable; gramática pregunta por estructuras A2.`;
+- Traducción practica frases completas; audio usa frase árabe escuchable; gramática pregunta por estructuras A2.
+- Evita bloques monótonos: alterna tipo, dirección, tema y fuente.`;
             const formatExample = mode === 'gramatica'
                 ? `{
   "preguntas": [
@@ -1086,29 +1155,31 @@ REGLAS OBLIGATORIAS:
 5. Prioriza verbos en presente salvo que el material de clase pida expresamente otra estructura A2.
 6. Evita repetir preguntas recientes, frases base recientes y respuestas correctas recientes cuando haya material alternativo suficiente.
 7. Varía fuentes, temas y estructuras: no concentres todo el simulacro en la misma página, lista o ejemplo.
-8. DIRECCIÓN COHERENTE:
+8. Sé creativo dentro del material: usa frases de casa, familia, trabajo, ciudad, nacionalidad, edad, ubicación y clase si aparecen; combina preguntas largas y cortas; no uses siempre el mismo sujeto ni el mismo verbo.
+9. Ordena las candidatas de forma variada: no agrupes todas las árabe→español primero ni todas las gramaticales juntas.
+10. DIRECCIÓN COHERENTE:
    - Para "direccion": "ar-es", la pregunta debe ser una frase en ÁRABE y las 4 opciones deben estar en ESPAÑOL.
    - Para "direccion": "es-ar", la pregunta debe ser una frase en ESPAÑOL y las 4 opciones deben estar en ÁRABE.
    - Para "direccion": "GRAM → AR" o "GRAM → ES", aplica solo a preguntas de gramática.
-9. El texto de "pregunta" debe empezar exactamente por "Traduce al español: " o "Traduce al árabe: " según corresponda.
+11. El texto de "pregunta" puede usar fórmulas variadas: "Traduce...", "¿Qué significa...?", "¿Cómo se dice...?", "Elige la frase...".
    Excepción: tipo "audio" y tipo "gramatica" no deben empezar por "Traduce".
-10. Incluye exactamente 4 opciones por pregunta. Solo 1 opción es correcta.
-11. REGLA DE IDIOMA ESTRICTA:
+12. Incluye exactamente 4 opciones por pregunta. Solo 1 opción es correcta.
+13. REGLA DE IDIOMA ESTRICTA:
    - Pregunta en español → TODAS las 4 opciones en árabe (1 correcta, 3 falsas).
    - Pregunta en árabe → TODAS las 4 opciones en español (1 correcta, 3 falsas).
    - Pregunta auditiva → frase árabe como base y TODAS las 4 opciones en español.
    - Pregunta gramatical → las 4 opciones deben estar en el mismo idioma entre sí.
-12. REGLA DE LONGITUD ESTRICTA PARA LAS 4 RESPUESTAS (±50%):
+14. REGLA DE LONGITUD ESTRICTA PARA LAS 4 RESPUESTAS (±50%):
    - Mide cada opción en caracteres.
    - Opción correcta = referencia (X caracteres).
    - Opciones falsas deben estar entre X*0.5 y X*1.5 caracteres.
    - Si una opción no cumple, reemplázala por otra frase del material de longitud similar.
-13. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
-14. Las opciones también deben ser frases, no sustantivos aislados, lecciones, etiquetas, números ni títulos.
-15. No incluyas etiquetas ni metadatos en preguntas u opciones: elimina "Ejemplo:", "Fonética:", transcripciones latinas entre paréntesis y números de lección.
-16. Explicación: cita la frase del material que justifica la respuesta, formato: "Frase del material: [cita]"
-17. Si necesitas variante de frase, marca: "[Variante del material: frase base original]"
-18. JSON únicamente, sin texto extra.
+15. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
+16. Las opciones también deben ser frases, no sustantivos aislados, lecciones, etiquetas, números ni títulos.
+17. No incluyas etiquetas ni metadatos en preguntas u opciones: elimina "Ejemplo:", "Fonética:", transcripciones latinas entre paréntesis y números de lección.
+18. Explicación: cita la frase del material que justifica la respuesta, formato: "Frase del material: [cita]"
+19. Si necesitas variante de frase, marca: "[Variante del material: frase base original]"
+20. JSON únicamente, sin texto extra.
 
 Formato obligatorio:
 ${formatExample}
@@ -1127,7 +1198,7 @@ ${context}`;
                 .map((question, index) => normalizeGeneratedQuestion(question, index, examOptions.mode))
                 .filter(q => q && q.pregunta && Array.isArray(q.opciones) && q.opciones.length === 4 && q.correcta >= 0)
                 .filter(q => !recentQuestionHints.includes(getQuestionFingerprint(q)));
-            const selectedQuestions = shuffleArray(normalized).slice(0, desiredCount);
+            const selectedQuestions = diversifyExamQuestions(normalized, desiredCount);
             if (selectedQuestions.length < desiredCount) {
                 console.error('Respuesta IA sin preguntas utilizables:', raw);
                 throw new Error('No se pudieron generar preguntas de calidad con el material subido. Revisa que el material guardado tenga frases completas bilingües o añade comentarios de prioridad más concretos.');
@@ -1320,7 +1391,7 @@ ${context}`;
                                                 {i+1}. {q.tipo === 'audio' ? (
                                                   <><span>Escucha la frase y elige la traducción correcta: </span><button type="button" onClick={() => playSmartAudio(q.audioText || questionBody)} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-100 text-orange-800 hover:bg-orange-200 text-xs font-bold"><Volume2 className="w-4 h-4" /> Escuchar</button></>
                                                 ) : questionIsArabic ? (
-                                                  <>Traduce al español: <ArabicTextWithAudio text={questionBody} className="font-arabic text-lg text-indigo-900" buttonClassName="align-middle" /></>
+                                                  <>{q.pregunta.replace(questionBody, '').trim()} <ArabicTextWithAudio text={questionBody} className="font-arabic text-lg text-indigo-900" buttonClassName="align-middle" /></>
                                                 ) : q.pregunta}
                                               </p>
                                             </div>
