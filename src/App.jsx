@@ -208,6 +208,7 @@ function normalizeGeneratedGrammarQuestion(question, index) {
   const pregunta = cleanExamPhrase(safeQuestion.pregunta || safeQuestion.question || `Pregunta de gramática ${index + 1}`);
   const respuestaCorrecta = cleanExamPhrase(rawOpciones[correcta]);
   if (!pregunta || !respuestaCorrecta) return null;
+  if (isAmbiguousGrammarQuestion(pregunta, opciones)) return null;
 
   const correctIsArabic = containsArabic(respuestaCorrecta);
   const validOpciones = opciones
@@ -230,6 +231,15 @@ function normalizeGeneratedGrammarQuestion(question, index) {
     explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en una estructura del material subido.',
     fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
   };
+}
+
+function isAmbiguousGrammarQuestion(questionText, options) {
+  const question = String(questionText || '');
+  const optionText = (options || []).join(' ');
+  const hasArabicGap = /[\u0600-\u06FF][^؟?]*(\.{2,}|…|___|__|_{2,})/.test(question);
+  const hasSuffixOptions = /(كَ|كِ|هُ|هَا|نَا|كُمْ|كُنَّ|هُمْ|هُنَّ)/.test(optionText);
+  const hasDisambiguatingCue = /(masculino|femenino|hombre|mujer|él|ella|ellos|ellas|vosotros|vosotras|yo|nosotros|mi|tu|su|nuestro|vuestra|de él|de ella|dirigido|persona|género|número)/i.test(question);
+  return hasArabicGap && hasSuffixOptions && !hasDisambiguatingCue;
 }
 
 function normalizeGeneratedQuestion(question, index, mode = 'traduccion') {
@@ -357,13 +367,42 @@ function buildTranslationQuestionText(body, direction) {
 }
 
 function cleanExamPhrase(text) {
-  return String(text || '')
+  const cleaned = String(text || '')
     .replace(/\([A-Za-zÀ-ÿ0-9\s.,;:'"¿?¡!_-]+\)/g, '')
     .replace(/(?:^|[\s:;.,])(?:Ejemplo|Example|Fonética|Fonetica|Transcripción|Transcripcion)\s*:\s*/gi, ' ')
     .replace(/^\s*[:;.,-]+\s*/, '')
     .replace(/\s*[:;.,-]+\s*$/, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
+  return containsArabic(cleaned) ? normalizeArabicNunation(cleaned) : cleaned;
+}
+
+const FIXED_NUNATION_WORDS = new Set([
+  'شكرًا', 'شُكْرًا',
+  'عفوًا', 'عَفْوًا',
+  'أيضًا', 'أَيْضًا',
+  'جدًا', 'جِدًّا',
+  'طبعًا', 'طَبْعًا',
+  'دائمًا', 'دَائِمًا',
+  'أحيانًا', 'أَحْيَانًا',
+  'مرحبًا', 'مَرْحَبًا',
+  'أهلًا', 'أَهْلًا',
+  'أهلاً', 'أَهْلًا',
+  'مساءً', 'مَسَاءً',
+  'صباحًا', 'صَبَاحًا'
+]);
+
+function normalizeArabicNunation(text) {
+  return String(text || '')
+    .split(/(\s+)/)
+    .map((part) => {
+      if (!containsArabic(part) || !/[ًٌٍ]/.test(part)) return part;
+      const bareWord = part.replace(/[^\u0600-\u06FFًٌٍَُِّْٰ]/g, '');
+      const comparable = bareWord.replace(/[ـ]/g, '');
+      if (FIXED_NUNATION_WORDS.has(comparable)) return part;
+      return part.replace(/[ًٌٍ]/g, '');
+    })
+    .join('');
 }
 
 function countUsefulWords(text) {
@@ -1098,6 +1137,8 @@ ${priorityNotes.trim()}
 - Usa formatos como completar hueco, elegir la forma correcta, detectar la frase correcta o elegir la explicación gramatical correcta.
 - Alterna formatos: hueco, forma correcta, error a detectar, concordancia, elección de partícula y transformación breve.
 - Las 4 opciones deben tener el mismo tipo y el mismo idioma entre sí.
+- Si hay un hueco con pronombres sufijados, demostrativos o formas de persona, la pregunta DEBE incluir la pista completa en español: significado objetivo, persona, género y número. Ejemplo válido: "Completa 'tu libro' dirigido a un hombre: كِتَابُ...". Ejemplo inválido: "Completa: كِتَابُ...".
+- Nunca generes preguntas donde varias opciones sean gramaticalmente correctas por falta de contexto.
 - La explicación debe indicar la regla o patrón del material.`
                 : mode === 'auditivo'
                   ? `MODO AUDITIVO:
@@ -1167,9 +1208,10 @@ REGLAS BASE PARA CREAR FRASES Y RESPUESTAS:
 9. Incluye variedad de frases afirmativas, negativas e interrogativas.
 10. Usa, cuando sea posible: demostrativos هذا، هذه، ذلك، تلك; pronombres personales; posesivos sencillos; nombres comunes; adjetivos básicos; lugares y objetos cotidianos.
 11. Escribe el árabe con signos diacríticos cuando sea útil para estudiantes principiantes.
-12. Añade siempre traducción al español cuando la respuesta correcta esté en español o cuando la explicación lo necesite.
-13. No incluyas explicaciones largas.
-14. No generes frases absurdas o artificiales.
+12. Evita la nunación/tanwin salvo excepciones fijas que siempre la usan, como شكرًا، عفوًا، أيضًا، جدًا، طبعًا، دائمًا، أحيانًا، مرحبًا، أهلًا، صباحًا، مساءً.
+13. Añade siempre traducción al español cuando la respuesta correcta esté en español o cuando la explicación lo necesite.
+14. No incluyas explicaciones largas.
+15. No generes frases absurdas o artificiales.
 
 REGLAS TÉCNICAS DEL TEST:
 1. Crea ${candidateCount} preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las ${desiredCount} mejores válidas.
@@ -1199,6 +1241,7 @@ REGLAS TÉCNICAS DEL TEST:
    - Opciones falsas deben estar entre X*0.5 y X*1.5 caracteres.
    - Si una opción no cumple, reemplázala por otra frase del material de longitud similar.
 15. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
+15b. Solo puede haber una respuesta correcta. Si dos opciones son gramaticalmente posibles, añade más contexto a la pregunta o descarta esa pregunta.
 16. Las opciones también deben ser frases, no sustantivos aislados, lecciones, etiquetas, números ni títulos.
 17. No incluyas etiquetas ni metadatos en preguntas u opciones: elimina "Ejemplo:", "Fonética:", transcripciones latinas entre paréntesis y números de lección.
 18. Explicación breve: cita la frase o vocabulario base del material cuando exista, formato: "Base del material: [cita o vocabulario]".
@@ -1519,7 +1562,7 @@ function AIAuditor({ cards, setCards, refreshCards }) {
                 const batch = cardsToAudit.slice(i, i + 15);
                 setLogs(prev => [`Analizando lote ${Math.floor(i/15)+1}...`, ...prev.slice(0,4)]);
                 const miniBatch = batch.map(c => ({ id: c.id, arabic: c.arabic, spanish: c.spanish }));
-                const prompt = `Audita este lote. REGLAS: 1. Elimina tanwin Damma/Kasra final en el árabe. 2. Mantén tanwin Fath solo en adverbios. 3. Corrige mala traducción al español. IGNORA SI ESTÁ BIEN. Responde SOLO con JSON array: [{"id": 123, "problem": "motivo", "suggestion": "texto corregido", "field": "arabic" o "spanish"}]. DATOS: ${JSON.stringify(miniBatch)}`;
+                const prompt = `Audita este lote. REGLAS: 1. Elimina tanwin/nunación innecesaria en el árabe. 2. Mantén solo excepciones fijas que siempre la usan, como شكرًا، عفوًا، أيضًا، جدًا، طبعًا، دائمًا، أحيانًا، مرحبًا، أهلًا، صباحًا، مساءً. 3. Corrige mala traducción al español. IGNORA SI ESTÁ BIEN. Responde SOLO con JSON array: [{"id": 123, "problem": "motivo", "suggestion": "texto corregido", "field": "arabic" o "spanish"}]. DATOS: ${JSON.stringify(miniBatch)}`;
                 const response = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.1 });
                 let rawContent = response.choices[0].message.content; const start = rawContent.indexOf('['); const end = rawContent.lastIndexOf(']');
                 if (start !== -1 && end !== -1) { try { const batchIssues = JSON.parse(rawContent.substring(start, end + 1)); const validIssues = batchIssues.filter(issue => { const card = batch.find(c => c.id === issue.id); if(!card) return false; const targetField = issue.field || (/[؀-ۿ]/.test(issue.suggestion) ? 'arabic' : 'spanish'); return card[targetField] !== issue.suggestion; }); allIssues = [...allIssues, ...validIssues]; } catch(e) {} }
