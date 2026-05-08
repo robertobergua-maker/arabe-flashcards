@@ -264,11 +264,16 @@ function normalizeGeneratedQuestion(question, index, mode = 'traduccion') {
     .filter(opt => optionLooksLikeAnswerPhrase(opt, direccion))
     .filter(opt => opt === respuestaCorrecta || isOptionLengthClose(opt, respuestaCorrecta));
 
-  if (!validOpciones.includes(respuestaCorrecta) || validOpciones.length < 4) return null;
+  const sameLanguageOpciones = opciones
+    .filter(opt => optionLanguageMatches(opt, direccion))
+    .filter(opt => optionLooksLikeAnswerPhrase(opt, direccion));
+  const usableOpciones = validOpciones.length >= 4 ? validOpciones : sameLanguageOpciones;
+
+  if (!usableOpciones.includes(respuestaCorrecta) || usableOpciones.length < 4) return null;
 
   const correctedOpciones = shuffleArray([
     respuestaCorrecta,
-    ...validOpciones.filter(opt => opt !== respuestaCorrecta).slice(0, 3)
+    ...shuffleArray(usableOpciones.filter(opt => opt !== respuestaCorrecta)).slice(0, 3)
   ]);
   const finalCorrecta = correctedOpciones.indexOf(respuestaCorrecta);
   
@@ -375,7 +380,7 @@ function isLikelyPhrase(text, expectsArabic) {
 
   // A phrase must have enough context to be exam-like. This rejects isolated
   // items such as "هذا" or "البلد" that made the old simulacros too easy.
-  return countUsefulWords(clean) >= (expectsArabic ? 3 : 4);
+  return countUsefulWords(clean) >= (expectsArabic ? 2 : 3);
 }
 
 function optionLanguageMatches(option, direction) {
@@ -384,15 +389,17 @@ function optionLanguageMatches(option, direction) {
 }
 
 function optionLooksLikeAnswerPhrase(option, direction) {
-  return isLikelyPhrase(option, direction === 'es-ar');
+  const clean = cleanExamPhrase(option);
+  if (!clean || containsArabic(clean) !== (direction === 'es-ar')) return false;
+  return countUsefulWords(clean) >= 2;
 }
 
 function isOptionLengthClose(option, reference) {
   const optionLength = String(option || '').trim().length;
   const referenceLength = String(reference || '').trim().length;
   if (!optionLength || !referenceLength) return false;
-  const min = referenceLength * 0.55;
-  const max = referenceLength * 1.65;
+  const min = referenceLength * 0.35;
+  const max = referenceLength * 2.25;
   return optionLength >= min && optionLength <= max;
 }
 
@@ -1220,9 +1227,9 @@ ${context}`;
             const selectedQuestions = selectedFresh.length >= desiredCount
                 ? selectedFresh
                 : [...selectedFresh, ...diversifyExamQuestions(fallbackPool, desiredCount - selectedFresh.length)];
-            if (selectedQuestions.length < desiredCount) {
+            if (selectedQuestions.length === 0) {
                 console.error('Respuesta IA sin preguntas utilizables:', raw);
-                throw new Error(`Solo se pudieron generar ${selectedQuestions.length} preguntas válidas. Prueba con menos preguntas o un modo distinto.`);
+                throw new Error('No se pudo generar ninguna pregunta válida. Prueba con otro modo o revisa que haya vocabulario suficiente en el material.');
             }
             rememberRecentExamQuestions(selectedQuestions);
             setTest(selectedQuestions);
