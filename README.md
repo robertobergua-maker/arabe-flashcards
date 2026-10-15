@@ -1,5 +1,21 @@
 # React + Vite
 
+## Mantener Supabase activo
+
+El repositorio incluye un mecanismo de keepalive para evitar la pausa por
+inactividad del plan Free:
+
+- `.github/workflows/keepalive.yml` hace una consulta diaria a `flashcards` a
+  las 07:00 UTC.
+
+### GitHub Actions
+
+En **Settings > Secrets and variables > Actions**, crea el secreto
+`SUPABASE_ANON_KEY` con la clave `anon` del proyecto. El workflow también se
+puede ejecutar manualmente desde la pestaña **Actions**.
+
+La clave `service_role` no debe utilizarse en este workflow.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

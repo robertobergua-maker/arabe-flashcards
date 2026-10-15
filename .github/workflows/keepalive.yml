@@ -1,0 +1,23 @@
+name: Supabase keepalive
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping flashcards table
+        env:
+          SUPABASE_URL: https://ggecznwbxpwybxmvmuog.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          test -n "$SUPABASE_ANON_KEY"
+          curl --fail-with-body --silent --show-error \
+            --get "$SUPABASE_URL/rest/v1/flashcards" \
+            --data-urlencode "select=id" \
+            --data-urlencode "limit=1" \
+            --header "apikey: $SUPABASE_ANON_KEY" \
+            --header "Authorization: Bearer $SUPABASE_ANON_KEY"
