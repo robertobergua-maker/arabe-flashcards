@@ -26,6 +26,22 @@ const getViewFromHash = () => {
   return APP_VIEWS.has(hashView) ? hashView : '';
 };
 
+function DeveloperCredit({ dark = false }) {
+  return (
+    <p className={`text-center text-xs ${dark ? 'text-white/50' : 'text-slate-400'}`}>
+      Desarrollado por{' '}
+      <a
+        href="https://samirarte.com/samirarte-digital/"
+        target="_blank"
+        rel="noreferrer"
+        className={`font-semibold transition-colors ${dark ? 'text-emerald-200 hover:text-white' : 'text-emerald-700 hover:text-emerald-500'}`}
+      >
+        Samirarte Digital
+      </a>
+    </p>
+  );
+}
+
 function ArabicTextWithAudio({ text, className = "", buttonClassName = "" }) {
   return (
     <span className={`inline-flex items-center gap-2 ${className}`} dir="rtl">
@@ -673,6 +689,9 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
                     <HelpCircle size={20} /> Ayuda de uso
                 </button>
             </div>
+            <div className="mt-8">
+              <DeveloperCredit />
+            </div>
         </div>
         {isHelpOpen && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -917,6 +936,9 @@ export default function App() {
             )}
             {!loading && <div className="mt-8 text-center text-[10px] text-slate-300 font-mono">Total Tarjetas: {cards.length}</div>}
           </div>
+      </div>
+      <div className="bg-white border-t border-slate-200 py-3">
+        <DeveloperCredit />
       </div>
       {isFormOpen && <CardFormModal card={editingCard} categories={categories.filter(c => c !== "Todos")} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
       {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} onImport={handleBulkImport} />}
