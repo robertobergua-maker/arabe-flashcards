@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">La Madrasa</title>
+  <desc id="desc">Arco verde con un libro abierto y una estrella dorada</desc>
+  <defs>
+    <linearGradient id="arch" x1="18" y1="12" x2="110" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10b981"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+    <linearGradient id="book" x1="32" y1="76" x2="96" y2="108" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#eefdf7"/>
+      <stop offset="1" stop-color="#c8f5e3"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="#f0fdf4"/>
+  <path d="M20 111V57C20 30.49 39.7 9 64 9s44 21.49 44 48v54" fill="none" stroke="url(#arch)" stroke-width="10" stroke-linecap="round"/>
+  <path d="M42 110V69c0-10.49 9.85-19 22-19s22 8.51 22 19v41" fill="#fff" opacity=".9"/>
+  <path d="m64 66 7-4 3-8 3 8 7 4-7 4-3 8-3-8z" fill="#fbbf24"/>
+  <path d="M30 82c12-5 23-3 34 6v28c-11-9-22-11-34-6z" fill="url(#book)" stroke="#059669" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M98 82c-12-5-23-3-34 6v28c11-9 22-11 34-6z" fill="url(#book)" stroke="#059669" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M64 88v28M39 91c7 0 13 2 19 6M89 91c-7 0-13 2-19 6" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M15 117h98" stroke="#065f46" stroke-width="5" stroke-linecap="round"/>
+</svg>

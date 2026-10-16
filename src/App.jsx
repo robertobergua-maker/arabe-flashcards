@@ -652,8 +652,8 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
             <div className="absolute -top-4 -right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-3 py-1 rounded-full rotate-12 shadow-md animate-pulse flex items-center gap-1">
                 <PartyPopper size={14}/> EOI 1A2 Ready!
             </div>
-            <div className="w-28 h-28 bg-gradient-to-br from-emerald-400 to-emerald-600 text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200">
-                <BookOpen size={50} />
+            <div className="w-32 h-32 bg-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200 ring-8 ring-emerald-50">
+                <img src="/lamadrasa-mark.svg" alt="Logotipo de La Madrasa" className="w-full h-full" />
             </div>
             <p className="text-sm font-bold text-slate-400 uppercase tracking-widest mb-2">¡Bienvenido a!</p>
             <div className="mb-2 relative inline-block">
@@ -871,7 +871,7 @@ export default function App() {
         <div className="w-full px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-3">
              <button onClick={goToWelcome} className="p-1 hover:bg-white/20 rounded-full transition"><ArrowLeft className="w-5 h-5"/></button>
-             <BookOpen className="w-6 h-6" />
+             <img src="/lamadrasa-mark.svg" alt="" aria-hidden="true" className="w-8 h-8 rounded-lg" />
              <h1 className="text-xl font-bold notranslate" translate="no">{isAdminMode ? "Modo Admin" : "Lamadrasa"}</h1>
           </div>
           <div className="flex-1 w-full max-w-4xl flex flex-col md:flex-row gap-3">
