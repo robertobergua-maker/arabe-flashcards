@@ -1,7 +1,21 @@
 import { createClient } from '@supabase/supabase-js'
 
-// Ve a Supabase -> Project Settings -> API para obtener estos datos:
-const supabaseUrl = 'https://ggecznwbxpwybxmvmuog.supabase.co'
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdnZWN6bndieHB3eWJ4bXZtdW9nIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0OTY4MTUsImV4cCI6MjA4MjA3MjgxNX0.DFDn-q6d-H4R4GwTZvFjMT-q8yPLKYbkjLyY57Rxw_Y'
+// Credenciales del cliente leídas del entorno (ver .env.example).
+// Las variables VITE_* se inyectan en el bundle en build time.
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+if (!supabaseUrl) {
+  console.error(
+    '[supabaseClient] Falta la variable de entorno VITE_SUPABASE_URL. ' +
+    'Defínela en tu archivo .env (local) o en el panel de variables del hosting (producción).'
+  )
+}
+if (!supabaseKey) {
+  console.error(
+    '[supabaseClient] Falta la variable de entorno VITE_SUPABASE_ANON_KEY. ' +
+    'Defínela en tu archivo .env (local) o en el panel de variables del hosting (producción).'
+  )
+}
 
 export const supabase = createClient(supabaseUrl, supabaseKey)

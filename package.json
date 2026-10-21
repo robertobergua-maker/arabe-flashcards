@@ -7,10 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "catalogar": "node scripts/catalogar-familias.js",
+    "ingestar": "node scripts/ingestar-aportes.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",
+    "dotenv": "^18.0.8",
     "lucide-react": "^0.562.0",
     "openai": "^6.16.0",
     "pdfjs-dist": "^5.4.530",

@@ -1,0 +1,259 @@
+// scripts/catalogar-familias.js
+//
+// Cataloga las tarjetas de la tabla `flashcards` asignándoles una o varias
+// "familias" temáticas genéricas de nivel A2 mediante OpenAI (gpt-4o-mini).
+//
+// Uso:
+//   node scripts/catalogar-familias.js            -> solo tarjetas sin familias
+//   node scripts/catalogar-familias.js --force    -> recataloga TODAS las tarjetas
+//   node scripts/catalogar-familias.js --dry-run  -> no escribe en Supabase, solo muestra el plan
+//
+// Variables de entorno requeridas (ver .env.example):
+//   SUPABASE_URL
+//   SUPABASE_SERVICE_ROLE_KEY
+//   OPENAI_API_KEY
+
+import 'dotenv/config';
+import { createClient } from '@supabase/supabase-js';
+import OpenAI from 'openai';
+
+// --- Configuración ---------------------------------------------------------
+
+const MODEL = 'gpt-4o-mini';
+const BATCH_SIZE = 25; // tarjetas por petición a la IA
+const PAGE_SIZE = 1000; // tarjetas por página al leer de Supabase
+
+// Lista CERRADA de familias temáticas válidas para A2.
+// La IA solo puede elegir valores de esta lista.
+const FAMILIAS_VALIDAS = [
+  'Familia y Relaciones',
+  'Casa y Vivienda',
+  'Comida y Bebida',
+  'Rutina y Tiempo Libre',
+  'Ciudad y Transporte',
+  'Compras',
+  'Salud',
+  'Trabajo y Estudios',
+  'Viajes y Clima',
+  'Gramática y Conectores',
+];
+
+const FAMILIAS_SET = new Set(FAMILIAS_VALIDAS);
+
+// --- Flags de línea de comandos --------------------------------------------
+
+const args = process.argv.slice(2);
+const FORCE = args.includes('--force');
+const DRY_RUN = args.includes('--dry-run');
+
+// --- Validación de entorno -------------------------------------------------
+
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`❌ Falta la variable de entorno "${name}". Añádela a tu archivo .env (ver .env.example).`);
+    process.exit(1);
+  }
+  return value;
+}
+
+const SUPABASE_URL = requireEnv('SUPABASE_URL');
+const SUPABASE_SERVICE_ROLE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY');
+const OPENAI_API_KEY = requireEnv('OPENAI_API_KEY');
+
+// --- Clientes ---------------------------------------------------------------
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false },
+});
+
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+// --- Utilidades -------------------------------------------------------------
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function chunk(array, size) {
+  const chunks = [];
+  for (let i = 0; i < array.length; i += size) {
+    chunks.push(array.slice(i, i + size));
+  }
+  return chunks;
+}
+
+/**
+ * Lee todas las tarjetas candidatas desde Supabase.
+ * Sin --force solo devuelve las que no tienen familias asignadas todavía
+ * (columna `familias` NULL o array vacío).
+ */
+async function fetchCards() {
+  const all = [];
+  for (let page = 0; page < 50; page += 1) {
+    let query = supabase
+      .from('flashcards')
+      .select('id, arabic, spanish, category, familias')
+      .order('id', { ascending: true })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+    if (!FORCE) {
+      // Solo tarjetas sin familias: NULL o array vacío.
+      query = query.or('familias.is.null,familias.eq.{}');
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data?.length) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+/**
+ * Normaliza la respuesta de la IA para una tarjeta: deja solo familias válidas,
+ * sin duplicados. Si no hay ninguna válida, cae a "Gramática y Conectores"
+ * como familia neutra por defecto (evita dejar la tarjeta sin catalogar).
+ */
+function sanitizeFamilies(rawFamilies) {
+  const list = Array.isArray(rawFamilies) ? rawFamilies : [];
+  const valid = [...new Set(list.map((f) => String(f).trim()))].filter((f) => FAMILIAS_SET.has(f));
+  return valid.length > 0 ? valid : ['Gramática y Conectores'];
+}
+
+const SYSTEM_PROMPT = `Eres un catalogador experto de vocabulario de árabe para estudiantes de nivel A2.
+Tu tarea es asignar a cada tarjeta una o más FAMILIAS temáticas genéricas.
+
+Debes elegir EXCLUSIVAMENTE valores de esta lista cerrada (copiados literalmente, con las mismas mayúsculas y acentos):
+${FAMILIAS_VALIDAS.map((f) => `- ${f}`).join('\n')}
+
+Reglas estrictas:
+- NO inventes familias nuevas ni variantes.
+- NO uses etiquetas como "Pista", "Vocabulario lección X", nombres de lección, números ni categorías del material original.
+- Asigna entre 1 y 3 familias por tarjeta, las más representativas.
+- Si una palabra es puramente gramatical (pronombres, preposiciones, conjunciones, verbos auxiliares, conectores), usa "Gramática y Conectores".
+- Responde SOLO con JSON válido.`;
+
+/**
+ * Pide a la IA que clasifique un lote de tarjetas.
+ * Devuelve un Map<id, string[]> con las familias saneadas.
+ */
+async function classifyBatch(batch) {
+  const payload = batch.map((c) => ({
+    id: c.id,
+    arabic: c.arabic || '',
+    spanish: c.spanish || '',
+    category: c.category || '',
+  }));
+
+  const userPrompt = `Clasifica estas tarjetas. Devuelve un objeto JSON con esta forma exacta:
+{
+  "resultados": [
+    { "id": <id numérico de la tarjeta>, "familias": ["Familia exacta de la lista", ...] }
+  ]
+}
+Incluye TODAS las tarjetas recibidas, cada una con su id original.
+
+TARJETAS:
+${JSON.stringify(payload, null, 2)}`;
+
+  const response = await openai.chat.completions.create({
+    model: MODEL,
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: userPrompt },
+    ],
+  });
+
+  const content = response.choices?.[0]?.message?.content || '{}';
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`La IA no devolvió JSON válido para el lote: ${error.message}`);
+  }
+
+  const resultados = Array.isArray(parsed.resultados) ? parsed.resultados : [];
+  const byId = new Map();
+  for (const item of resultados) {
+    const id = item?.id;
+    if (id === undefined || id === null) continue;
+    byId.set(Number(id), sanitizeFamilies(item.familias));
+  }
+  return byId;
+}
+
+/**
+ * Actualiza la columna `familias` (text[]) de una tarjeta en Supabase.
+ */
+async function updateCardFamilies(id, familias) {
+  const { error } = await supabase
+    .from('flashcards')
+    .update({ familias })
+    .eq('id', id);
+  if (error) throw error;
+}
+
+// --- Programa principal -----------------------------------------------------
+
+async function main() {
+  console.log('🔌 Conectando a Supabase y OpenAI...');
+  console.log(`   Modo: ${FORCE ? 'FORCE (todas las tarjetas)' : 'solo tarjetas sin familias'}${DRY_RUN ? ' · DRY-RUN (sin escribir)' : ''}`);
+
+  const cards = await fetchCards();
+  console.log(`📥 ${cards.length} tarjeta(s) a catalogar.`);
+  if (cards.length === 0) {
+    console.log('✅ No hay nada que hacer.');
+    return;
+  }
+
+  const batches = chunk(cards, BATCH_SIZE);
+  let updated = 0;
+  let failed = 0;
+
+  for (let i = 0; i < batches.length; i += 1) {
+    const batch = batches[i];
+    process.stdout.write(`🧠 Lote ${i + 1}/${batches.length} (${batch.length} tarjetas)... `);
+
+    let classification;
+    try {
+      classification = await classifyBatch(batch);
+    } catch (error) {
+      console.log(`⚠️  error de IA: ${error.message}`);
+      failed += batch.length;
+      continue;
+    }
+
+    for (const card of batch) {
+      const familias = classification.get(Number(card.id)) || sanitizeFamilies([]);
+      if (DRY_RUN) {
+        console.log(`\n   [dry-run] #${card.id} "${card.spanish || card.arabic}" -> ${familias.join(', ')}`);
+        updated += 1;
+        continue;
+      }
+      try {
+        await updateCardFamilies(card.id, familias);
+        updated += 1;
+      } catch (error) {
+        console.log(`\n   ❌ No se pudo actualizar #${card.id}: ${error.message}`);
+        failed += 1;
+      }
+    }
+
+    if (!DRY_RUN) process.stdout.write('ok\n');
+
+    // Pequeña pausa para no saturar la API entre lotes.
+    if (i < batches.length - 1) await sleep(400);
+  }
+
+  console.log('\n🎉 Catalogación terminada.');
+  console.log(`   Actualizadas: ${updated}`);
+  if (failed > 0) console.log(`   Con errores:  ${failed}`);
+  if (DRY_RUN) console.log('   (DRY-RUN: no se escribió nada en Supabase)');
+}
+
+main().catch((error) => {
+  console.error('\n💥 Error fatal:', error.message);
+  process.exit(1);
+});

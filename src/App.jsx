@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
-import OpenAI from 'openai';
-import * as pdfjsLib from 'pdfjs-dist'; 
+import { FAMILIAS_A2, getCardFamilias } from './constants/familias';
+import { useAdminSession } from './useAdminSession';
+import AdminLoginForm from './AdminLoginForm';
 import { 
   Search, Volume2, BookOpen, X, Check, ArrowLeft, ArrowRight,
   PlayCircle, Settings, Filter, Plus, Trash2, Edit2, Lock, Unlock, 
@@ -10,17 +11,34 @@ import {
   AlertTriangle, ChevronLeft, ChevronRight, Sparkles, Database, Copy, PartyPopper
 } from 'lucide-react';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
+// Carga perezosa de dependencias pesadas (solo se descargan cuando el admin
+// las usa, no en el arranque inicial de la app).
+let _openaiModulePromise = null;
+async function loadOpenAI() {
+  if (!_openaiModulePromise) _openaiModulePromise = import('openai');
+  const mod = await _openaiModulePromise;
+  return mod.default;
+}
+
+let _pdfjsModulePromise = null;
+async function loadPdfjs() {
+  if (!_pdfjsModulePromise) {
+    _pdfjsModulePromise = import('pdfjs-dist').then((pdfjsLib) => {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
+      return pdfjsLib;
+    });
+  }
+  return _pdfjsModulePromise;
+}
 
 // --- UTILIDADES ---
 const removeArabicDiacritics = (text) => text ? text.replace(/[\u064B-\u065F\u0670]/g, '') : "";
 const normalizeForSearch = (text) => text ? text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\u064B-\u065F\u0670]/g, "") : ""; 
 const shuffleArray = (array) => { const newArray = [...array]; for (let i = newArray.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [newArray[i], newArray[j]] = [newArray[j], newArray[i]]; } return newArray; };
 const safeGetStorage = (key, fallback) => { try { const saved = localStorage.getItem(key); return saved ? JSON.parse(saved) : fallback; } catch (e) { return fallback; } };
-const setSafeStorage = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { console.warn("No se pudo guardar localmente:", e); } };
 const getCardType = (card) => { if (!card) return 'word'; if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase'; return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word'; };
 const playSmartAudio = (text) => { if (!text) return; try { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'ar-SA'; utterance.rate = 0.7; const voices = window.speechSynthesis.getVoices(); const preferredVoice = voices.find(v => v.lang.includes('ar')); if (preferredVoice) utterance.voice = preferredVoice; window.speechSynthesis.speak(utterance); } catch (e) { console.error("Audio error", e); } };
-const APP_VIEWS = new Set(['welcome', 'flashcards', 'exam']);
+const APP_VIEWS = new Set(['welcome', 'flashcards']);
 const getViewFromHash = () => {
   const hashView = window.location.hash.replace(/^#\/?/, '');
   return APP_VIEWS.has(hashView) ? hashView : '';
@@ -61,601 +79,8 @@ function ArabicTextWithAudio({ text, className = "", buttonClassName = "" }) {
   );
 }
 
-const PDF_TEXT_MIN_CHARS = 40;
-const PDF_RENDER_TARGET_SCALE = 2.4;
-const PDF_MAX_CANVAS_SIDE = 2200;
-
-const cleanExtractedText = (text) => (text || "")
-  .replace(/\s+\n/g, "\n")
-  .replace(/\n{3,}/g, "\n\n")
-  .replace(/[ \t]{2,}/g, " ")
-  .replace(/Página \d+/gi, "")  // Eliminar números de página
-  .replace(/\b\d{1,3}\b/g, "")  // Eliminar números sueltos (1-3 dígitos)
-  .replace(/\.\w{2,4}(\s|$)/g, "")  // Eliminar extensiones de archivo
-  .replace(/\b\w{1,2}\b/g, "")  // Eliminar palabras muy cortas (1-2 letras, posibles fragmentos)
-  .trim();
-
-async function extractTextFromPdfPage(page) {
-  try {
-    const textContent = await page.getTextContent();
-    const rawText = textContent.items
-      .map(item => item.str || "")
-      .join(" ");
-    return cleanExtractedText(rawText);
-  } catch (error) {
-    console.warn("No se pudo extraer texto nativo del PDF:", error);
-    return "";
-  }
-}
-
-async function renderPdfPageToDataUrl(page) {
-  const baseViewport = page.getViewport({ scale: 1 });
-  const largestSide = Math.max(baseViewport.width, baseViewport.height);
-  const safeScale = Math.min(PDF_RENDER_TARGET_SCALE, PDF_MAX_CANVAS_SIDE / largestSide);
-  const viewport = page.getViewport({ scale: Math.max(1.4, safeScale) });
-
-  const canvas = document.createElement('canvas');
-  const context = canvas.getContext('2d', { willReadFrequently: false });
-  canvas.width = Math.ceil(viewport.width);
-  canvas.height = Math.ceil(viewport.height);
-
-  context.save();
-  context.fillStyle = '#ffffff';
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  context.restore();
-
-  const renderTask = page.render({ canvasContext: context, viewport });
-  await renderTask.promise;
-  const image = canvas.toDataURL('image/jpeg', 0.92);
-  canvas.width = 0;
-  canvas.height = 0;
-  return image;
-}
-
-async function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error || new Error('No se pudo leer el archivo.'));
-    reader.readAsDataURL(file);
-  });
-}
-
-function parseVisionJsonResponse(rawContent) {
-  const raw = (rawContent || "").trim();
-  try {
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
-    return {
-      hasText: Boolean(parsed.hasText),
-      content: cleanExtractedText(parsed.content || ""),
-      notes: parsed.notes || ""
-    };
-  } catch (error) {
-    const content = cleanExtractedText(raw.replace(/^```json|```$/g, ""));
-    return {
-      hasText: content.length > 0 && !/LIENZO_EN_BLANCO|NO_TEXT|SIN_TEXTO/i.test(content),
-      content,
-      notes: "Respuesta no JSON; se guardó el texto recuperado."
-    };
-  }
-}
-
-async function transcribeImageWithOpenAI(openai, imageDataUrl, label = "imagen") {
-  const prompt = `Lee esta ${label} como material de clase de Árabe A2.
-Devuelve SOLO JSON válido con esta forma:
-{
-  "hasText": true,
-  "content": "transcripción completa y ordenada del texto visible",
-  "notes": "observaciones breves si algo está borroso o cortado"
-}
-Reglas:
-- Transcribe todo el texto visible en árabe, español o fonética.
-- Conserva el árabe en escritura árabe y respeta el orden lógico de lectura.
-- Si hay tablas o listas de vocabulario, mantenlas como listas claras.
-- Si no hay ningún texto legible, usa {"hasText": false, "content": "", "notes": "sin texto legible"}.`;
-
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o",
-    response_format: { type: "json_object" },
-    messages: [{
-      role: "user",
-      content: [
-        { type: "text", text: prompt },
-        { type: "image_url", image_url: { url: imageDataUrl } }
-      ]
-    }]
-  });
-
-  return parseVisionJsonResponse(response.choices?.[0]?.message?.content || "");
-}
-
-async function summarizeMaterialWithOpenAI(openai, sourceText, label, priorityNotes = "") {
-  const priorityBlock = priorityNotes.trim()
-    ? `
-NOTAS DE PRIORIDAD DEL ADMINISTRADOR:
-${priorityNotes.trim()}
-`
-    : "";
-  const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
-Analiza el siguiente material y devuelve una ficha útil para preparar examen.
-Incluye SOLO información que aparezca en el material: vocabulario, frases bilingües, verbos en presente, estructuras, gramática, errores habituales y ejemplos.
-Conserva literalmente todas las frases árabe-español / español-árabe que detectes.
-Incluye una sección llamada "FRASES BASE PARA EXAMEN" con pares de traducción cuando existan.
-Si hay NOTAS DE PRIORIDAD DEL ADMINISTRADOR, incorpóralas literalmente en una sección "PRIORIDAD PARA EXAMEN" y marca ese material como preferente para futuros simulacros.
-No inventes contenido que no esté en el material.
-
-FUENTE: ${label}${priorityBlock}
-MATERIAL:
-${sourceText}`;
-
-  const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.1
-  });
-
-  return cleanExtractedText(response.choices?.[0]?.message?.content || sourceText);
-}
-
-function extractJsonArray(rawContent) {
-  const raw = (rawContent || "").trim();
-  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fencedMatch ? fencedMatch[1].trim() : raw;
-  const start = candidate.indexOf('[');
-  const end = candidate.lastIndexOf(']');
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error('La IA no devolvió una lista JSON válida.');
-  }
-  return JSON.parse(candidate.substring(start, end + 1));
-}
-
-function normalizeGeneratedGrammarQuestion(question, index) {
-  const safeQuestion = question && typeof question === 'object' ? question : {};
-  const rawOpciones = Array.isArray(safeQuestion.opciones)
-    ? safeQuestion.opciones
-    : Array.isArray(safeQuestion.options)
-      ? safeQuestion.options
-      : [];
-  const opciones = [...new Set(rawOpciones.map(opt => cleanExamPhrase(opt)).filter(Boolean))];
-  let correcta = Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : Number(safeQuestion.correcta);
-  if (!Number.isInteger(correcta) || correcta < 0 || correcta >= rawOpciones.length) correcta = 0;
-
-  const pregunta = cleanExamPhrase(safeQuestion.pregunta || safeQuestion.question || `Pregunta de gramática ${index + 1}`);
-  const respuestaCorrecta = cleanExamPhrase(rawOpciones[correcta]);
-  if (!pregunta || !respuestaCorrecta) return null;
-  if (isAmbiguousGrammarQuestion(pregunta, opciones)) return null;
-
-  const correctIsArabic = containsArabic(respuestaCorrecta);
-  const validOpciones = opciones
-    .filter(opt => containsArabic(opt) === correctIsArabic)
-    .filter(opt => opt === respuestaCorrecta || isOptionLengthClose(opt, respuestaCorrecta));
-
-  if (!validOpciones.includes(respuestaCorrecta) || validOpciones.length < 4) return null;
-
-  const correctedOpciones = shuffleArray([
-    respuestaCorrecta,
-    ...validOpciones.filter(opt => opt !== respuestaCorrecta).slice(0, 3)
-  ]);
-
-  return {
-    tipo: 'gramatica',
-    direccion: correctIsArabic ? 'GRAM → AR' : 'GRAM → ES',
-    pregunta,
-    opciones: correctedOpciones,
-    correcta: correctedOpciones.indexOf(respuestaCorrecta),
-    explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en una estructura del material subido.',
-    fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
-  };
-}
-
-function isAmbiguousGrammarQuestion(questionText, options) {
-  const question = String(questionText || '');
-  const optionText = (options || []).join(' ');
-  const hasArabicGap = /[\u0600-\u06FF][^؟?]*(\.{2,}|…|___|__|_{2,})/.test(question);
-  const hasSuffixOptions = /(كَ|كِ|هُ|هَا|نَا|كُمْ|كُنَّ|هُمْ|هُنَّ)/.test(optionText);
-  const hasDisambiguatingCue = /(masculino|femenino|hombre|mujer|él|ella|ellos|ellas|vosotros|vosotras|yo|nosotros|mi|tu|su|nuestro|vuestra|de él|de ella|dirigido|persona|género|número)/i.test(question);
-  return hasArabicGap && hasSuffixOptions && !hasDisambiguatingCue;
-}
-
-function normalizeGeneratedQuestion(question, index, mode = 'traduccion') {
-  const requestedType = String(question?.tipo || question?.type || '').toLowerCase();
-  if (mode === 'gramatica' || requestedType.includes('gram')) {
-    return normalizeGeneratedGrammarQuestion(question, index);
-  }
-
-  const safeQuestion = question && typeof question === 'object' ? question : {};
-  const rawOpciones = Array.isArray(safeQuestion.opciones)
-    ? safeQuestion.opciones
-    : Array.isArray(safeQuestion.options)
-      ? safeQuestion.options
-      : [];
-  const opciones = [...new Set(rawOpciones.map(opt => cleanExamPhrase(opt)).filter(Boolean))];
-  let correcta = Number.isInteger(safeQuestion.correcta) ? safeQuestion.correcta : Number(safeQuestion.correcta);
-  if (!Number.isInteger(correcta) || correcta < 0 || correcta >= rawOpciones.length) correcta = 0;
-
-  const preguntaOriginal = safeQuestion.pregunta || safeQuestion.question || `Pregunta ${index + 1}`;
-  const cuerpoPregunta = getQuestionBody(preguntaOriginal);
-  const preguntaEsArabe = containsArabic(cuerpoPregunta);
-  const direccion = preguntaEsArabe ? 'ar-es' : 'es-ar';
-  const pregunta = buildTranslationQuestionText(cuerpoPregunta, direccion);
-  const respuestaCorrecta = cleanExamPhrase(rawOpciones[correcta]);
-
-  if (!isLikelyPhrase(cuerpoPregunta, preguntaEsArabe)) return null;
-  if ((mode === 'auditivo' || requestedType.includes('audio')) && !preguntaEsArabe) return null;
-  if (!respuestaCorrecta || !optionLanguageMatches(respuestaCorrecta, direccion) || !optionLooksLikeAnswerPhrase(respuestaCorrecta, direccion)) return null;
-
-  const validOpciones = opciones
-    .filter(opt => optionLanguageMatches(opt, direccion))
-    .filter(opt => optionLooksLikeAnswerPhrase(opt, direccion))
-    .filter(opt => opt === respuestaCorrecta || isOptionLengthClose(opt, respuestaCorrecta));
-
-  const sameLanguageOpciones = opciones
-    .filter(opt => optionLanguageMatches(opt, direccion))
-    .filter(opt => optionLooksLikeAnswerPhrase(opt, direccion));
-  const usableOpciones = validOpciones.length >= 4 ? validOpciones : sameLanguageOpciones;
-
-  if (!usableOpciones.includes(respuestaCorrecta) || usableOpciones.length < 4) return null;
-
-  const correctedOpciones = shuffleArray([
-    respuestaCorrecta,
-    ...shuffleArray(usableOpciones.filter(opt => opt !== respuestaCorrecta)).slice(0, 3)
-  ]);
-  const finalCorrecta = correctedOpciones.indexOf(respuestaCorrecta);
-  
-  return {
-    tipo: mode === 'auditivo' || requestedType.includes('audio') ? 'audio' : 'traduccion',
-    direccion,
-    pregunta: mode === 'auditivo' || requestedType.includes('audio') ? 'Escucha la frase y elige la traducción correcta' : pregunta,
-    audioText: mode === 'auditivo' || requestedType.includes('audio') ? cuerpoPregunta : '',
-    opciones: correctedOpciones,
-    correcta: finalCorrecta,
-    explicacion: safeQuestion.explicacion || safeQuestion.explanation || 'Respuesta basada en el material subido.',
-    fuente: safeQuestion.fuente || safeQuestion.source || 'Material subido'
-  };
-}
-
-function findFirstQuestionArray(value) {
-  if (Array.isArray(value)) return value;
-  if (!value || typeof value !== 'object') return [];
-
-  const preferredKeys = ['preguntas', 'questions', 'test', 'items', 'simulacro', 'exam'];
-  for (const key of preferredKeys) {
-    if (Array.isArray(value[key])) return value[key];
-  }
-
-  for (const nested of Object.values(value)) {
-    const found = findFirstQuestionArray(nested);
-    if (found.length > 0) return found;
-  }
-
-  return [];
-}
-
-function parseGeneratedQuestions(rawContent) {
-  const raw = (rawContent || '').trim();
-  if (!raw) throw new Error('La IA devolvió una respuesta vacía.');
-
-  try {
-    const parsed = JSON.parse(raw);
-    return findFirstQuestionArray(parsed);
-  } catch (firstError) {
-    try {
-      return extractJsonArray(raw);
-    } catch (secondError) {
-      throw new Error(`La IA no devolvió JSON de preguntas válido. Respuesta inicial: ${raw.slice(0, 300)}`);
-    }
-  }
-}
-
-
-function containsArabic(text) {
-  return /[\u0600-\u06FF]/.test(text || '');
-}
-
-function getQuestionBody(questionText) {
-  return cleanExamPhrase(String(questionText || '')
-    .replace(/^Traduce\s+al\s+español\s*:\s*/i, '')
-    .replace(/^Traduce\s+al\s+árabe\s*:\s*/i, '')
-    .replace(/^Traduce\s+al\s+arabe\s*:\s*/i, '')
-    .replace(/^¿Qué\s+significa\s+en\s+español\s*:\s*/i, '')
-    .replace(/^Elige\s+la\s+traducción\s+correcta\s+en\s+español\s*:\s*/i, '')
-    .replace(/^Marca\s+la\s+opción\s+que\s+traduce\s+esta\s+frase\s*:\s*/i, '')
-    .replace(/^¿Cómo\s+se\s+dice\s+en\s+árabe\s*:\s*/i, '')
-    .replace(/^Elige\s+la\s+frase\s+árabe\s+correcta\s+para\s*:\s*/i, '')
-    .replace(/^Escucha[^:]*:\s*/i, '')
-    .trim());
-}
-
-function buildTranslationQuestionText(body, direction) {
-  const arEsPrompts = [
-    `Traduce al español: ${body}`,
-    `¿Qué significa en español: ${body}`,
-    `Elige la traducción correcta en español: ${body}`,
-    `Marca la opción que traduce esta frase: ${body}`
-  ];
-  const esArPrompts = [
-    `Traduce al árabe: ${body}`,
-    `¿Cómo se dice en árabe: ${body}`,
-    `Elige la frase árabe correcta para: ${body}`
-  ];
-  return shuffleArray(direction === 'ar-es' ? arEsPrompts : esArPrompts)[0];
-}
-
-function cleanExamPhrase(text) {
-  const cleaned = String(text || '')
-    .replace(/\([A-Za-zÀ-ÿ0-9\s.,;:'"¿?¡!_-]+\)/g, '')
-    .replace(/(?:^|[\s:;.,])(?:Ejemplo|Example|Fonética|Fonetica|Transcripción|Transcripcion)\s*:\s*/gi, ' ')
-    .replace(/^\s*[:;.,-]+\s*/, '')
-    .replace(/\s*[:;.,-]+\s*$/, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
-  return containsArabic(cleaned) ? normalizeArabicNunation(cleaned) : cleaned;
-}
-
-const FIXED_NUNATION_WORDS = new Set([
-  'شكرًا', 'شُكْرًا',
-  'عفوًا', 'عَفْوًا',
-  'أيضًا', 'أَيْضًا',
-  'جدًا', 'جِدًّا',
-  'طبعًا', 'طَبْعًا',
-  'دائمًا', 'دَائِمًا',
-  'أحيانًا', 'أَحْيَانًا',
-  'مرحبًا', 'مَرْحَبًا',
-  'أهلًا', 'أَهْلًا',
-  'أهلاً', 'أَهْلًا',
-  'مساءً', 'مَسَاءً',
-  'صباحًا', 'صَبَاحًا'
-]);
-
-function normalizeArabicNunation(text) {
-  return String(text || '')
-    .split(/(\s+)/)
-    .map((part) => {
-      if (!containsArabic(part) || !/[ًٌٍ]/.test(part)) return part;
-      const bareWord = part.replace(/[^\u0600-\u06FFًٌٍَُِّْٰ]/g, '');
-      const comparable = bareWord.replace(/[ـ]/g, '');
-      if (FIXED_NUNATION_WORDS.has(comparable)) return part;
-      return part.replace(/[ًٌٍ]/g, '');
-    })
-    .join('');
-}
-
-function countUsefulWords(text) {
-  return String(text || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean).length;
-}
-
-function isLikelyPhrase(text, expectsArabic) {
-  const clean = getQuestionBody(text);
-  if (!clean) return false;
-  if (containsArabic(clean) !== expectsArabic) return false;
-
-  // A phrase must have enough context to be exam-like. This rejects isolated
-  // items such as "هذا" or "البلد" that made the old simulacros too easy.
-  return countUsefulWords(clean) >= (expectsArabic ? 2 : 3);
-}
-
-function optionLanguageMatches(option, direction) {
-  const hasArabic = containsArabic(option);
-  return direction === 'es-ar' ? hasArabic : !hasArabic;
-}
-
-function optionLooksLikeAnswerPhrase(option, direction) {
-  const clean = cleanExamPhrase(option);
-  if (!clean || containsArabic(clean) !== (direction === 'es-ar')) return false;
-  return countUsefulWords(clean) >= 2;
-}
-
-function isOptionLengthClose(option, reference) {
-  const optionLength = String(option || '').trim().length;
-  const referenceLength = String(reference || '').trim().length;
-  if (!optionLength || !referenceLength) return false;
-  const min = referenceLength * 0.35;
-  const max = referenceLength * 2.25;
-  return optionLength >= min && optionLength <= max;
-}
-
-function getQuestionKeywords(question) {
-  return normalizeForSearch(`${question?.audioText || ''} ${question?.pregunta || ''} ${question?.opciones?.[question.correcta] || ''}`)
-    .split(/\s+/)
-    .filter(token => token.length > 3)
-    .slice(0, 14);
-}
-
-function diversifyExamQuestions(questions, desiredCount) {
-  const pool = shuffleArray(questions);
-  const selected = [];
-  const usedSources = new Map();
-  const usedTypes = new Map();
-  const usedDirections = new Map();
-  const usedKeywords = new Set();
-
-  while (selected.length < desiredCount && pool.length > 0) {
-    let bestIndex = 0;
-    let bestScore = -Infinity;
-
-    pool.forEach((question, index) => {
-      const keywords = getQuestionKeywords(question);
-      const repeatedKeywords = keywords.filter(keyword => usedKeywords.has(keyword)).length;
-      const sourceCount = usedSources.get(question.fuente || '') || 0;
-      const typeCount = usedTypes.get(question.tipo || '') || 0;
-      const directionCount = usedDirections.get(question.direccion || '') || 0;
-      const score = Math.random()
-        - sourceCount * 2.2
-        - repeatedKeywords * 1.4
-        - typeCount * 0.35
-        - directionCount * 0.25;
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = index;
-      }
-    });
-
-    const [chosen] = pool.splice(bestIndex, 1);
-    selected.push(chosen);
-    usedSources.set(chosen.fuente || '', (usedSources.get(chosen.fuente || '') || 0) + 1);
-    usedTypes.set(chosen.tipo || '', (usedTypes.get(chosen.tipo || '') || 0) + 1);
-    usedDirections.set(chosen.direccion || '', (usedDirections.get(chosen.direccion || '') || 0) + 1);
-    getQuestionKeywords(chosen).forEach(keyword => usedKeywords.add(keyword));
-  }
-
-  return selected;
-}
-
-const EXAM_LOCAL_HISTORY_KEY = 'exam_1a2_local_history';
-const EXAM_RECENT_QUESTIONS_KEY = 'exam_1a2_recent_questions';
-
-function getQuestionFingerprint(question) {
-  const body = question?.audioText || getQuestionBody(question?.pregunta || '');
-  const answer = question?.opciones?.[question.correcta] || '';
-  return normalizeForSearch(`${question?.direccion || ''}|${body}|${answer}`).slice(0, 220);
-}
-
-function rememberRecentExamQuestions(questions) {
-  const current = safeGetStorage(EXAM_RECENT_QUESTIONS_KEY, []);
-  const next = [
-    ...questions.map(getQuestionFingerprint),
-    ...current
-  ].filter(Boolean);
-  setSafeStorage(EXAM_RECENT_QUESTIONS_KEY, [...new Set(next)].slice(0, 80));
-}
-
-function getRecentQuestionHints() {
-  return safeGetStorage(EXAM_RECENT_QUESTIONS_KEY, []).slice(0, 20);
-}
-
-function buildExamHistoryEntry(question, selectedIndex, isCorrect) {
-  return {
-    id: getQuestionFingerprint(question),
-    date: new Date().toISOString(),
-    tipo: question.tipo || 'traduccion',
-    pregunta: question.pregunta,
-    audioText: question.audioText || '',
-    direccion: question.direccion,
-    selected: question.opciones[selectedIndex],
-    correct: question.opciones[question.correcta],
-    explicacion: question.explicacion || '',
-    fuente: question.fuente || '',
-    isCorrect
-  };
-}
-
-function addLocalExamHistoryEntry(entry) {
-  const current = safeGetStorage(EXAM_LOCAL_HISTORY_KEY, []);
-  const next = [entry, ...current].slice(0, 200);
-  setSafeStorage(EXAM_LOCAL_HISTORY_KEY, next);
-  return next;
-}
-
-function stripMarkdownNoise(text) {
-  return String(text || '')
-    .replace(/^[-*•\d.)\s]+/, '')
-    .replace(/\*\*/g, '')
-    .trim();
-}
-
-function extractStudyPairsFromKnowledge(knowledge) {
-  const pairs = [];
-  const seen = new Set();
-
-  (knowledge || []).forEach((block) => {
-    const source = block?.category || 'Material subido';
-    const lines = String(block?.content || '')
-      .split(/\n+/)
-      .map(stripMarkdownNoise)
-      .filter(line => line.length > 3);
-
-    for (const line of lines) {
-      if (!containsArabic(line)) continue;
-
-      const separators = [' = ', ' - ', ' – ', ' — ', ':', ' : ', '|', ' | ', ' / ', ' /'];
-      for (const sep of separators) {
-        if (!line.includes(sep)) continue;
-        const parts = line.split(sep).map(stripMarkdownNoise).filter(Boolean);
-        if (parts.length < 2) continue;
-
-        const left = parts[0];
-        const right = parts.slice(1).join(' ').trim();
-        const arabic = cleanExamPhrase(containsArabic(left) ? left : containsArabic(right) ? right : '');
-        const spanish = cleanExamPhrase(containsArabic(left) ? right : left);
-
-        if (arabic && spanish && spanish.length > 1) {
-          const key = `${arabic}__${spanish}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            pairs.push({ arabic, spanish, source });
-          }
-          break;
-        }
-      }
-    }
-  });
-
-  return pairs;
-}
-
-function buildLocalTranslationTest(knowledge, desiredCount = 10) {
-  const pairs = extractStudyPairsFromKnowledge(knowledge)
-    .filter(pair => isLikelyPhrase(pair.arabic, true) && isLikelyPhrase(pair.spanish, false));
-  if (pairs.length === 0) return [];
-
-  const shuffledPairs = shuffleArray(pairs);
-  const arEsCount = Math.ceil(desiredCount / 2);
-  const esArCount = desiredCount - arEsCount;
-  
-  const arEsQuestions = shuffledPairs.slice(0, arEsCount).map((pair) => {
-    const correctText = pair.spanish;
-    const distractorPool = pairs.filter(p => p !== pair).map(p => p.spanish).filter(Boolean);
-    const uniqueDistractors = Array.from(new Set(shuffleArray(distractorPool)));
-    const similarDistractors = uniqueDistractors.filter(d => isOptionLengthClose(d, correctText));
-    const distractors = similarDistractors.slice(0, 3);
-    while (distractors.length < 3) {
-      const fallback = uniqueDistractors.find(d => !distractors.includes(d));
-      if (!fallback) return null;
-      distractors.push(fallback);
-    }
-    const opciones = shuffleArray([correctText, ...distractors]).slice(0, 4);
-    return distractors.length === 3 ? { tipo: 'traduccion', direccion: 'ar-es', pregunta: `Traduce al español: ${pair.arabic}`, opciones, correcta: opciones.indexOf(correctText), explicacion: `Frase del material: "${pair.arabic}"`, fuente: pair.source } : null;
-  }).filter(Boolean);
-
-  const esArQuestions = shuffledPairs.slice(arEsCount, arEsCount + esArCount).map((pair) => {
-    const correctText = pair.arabic;
-    const distractorPool = pairs.filter(p => p !== pair).map(p => p.arabic).filter(Boolean);
-    const uniqueDistractors = Array.from(new Set(shuffleArray(distractorPool)));
-    const similarDistractors = uniqueDistractors.filter(d => isOptionLengthClose(d, correctText));
-    const distractors = similarDistractors.slice(0, 3);
-    while (distractors.length < 3) {
-      const fallback = uniqueDistractors.find(d => !distractors.includes(d));
-      if (!fallback) return null;
-      distractors.push(fallback);
-    }
-    const opciones = shuffleArray([correctText, ...distractors]).slice(0, 4);
-    return distractors.length === 3 ? { tipo: 'traduccion', direccion: 'es-ar', pregunta: `Traduce al árabe: ${pair.spanish}`, opciones, correcta: opciones.indexOf(correctText), explicacion: `Frase del material: "${pair.spanish}"`, fuente: pair.source } : null;
-  }).filter(Boolean);
-
-  return shuffleArray([...arEsQuestions, ...esArQuestions]).slice(0, desiredCount);
-}
-
-function adaptLocalTestToMode(test, mode) {
-  if (mode !== 'auditivo') return test;
-  return test
-    .filter(question => question.direccion === 'ar-es')
-    .map(question => ({
-      ...question,
-      tipo: 'audio',
-      audioText: getQuestionBody(question.pregunta),
-      pregunta: 'Escucha la frase y elige la traducción correcta'
-    }));
-}
-
-
-
-
 // --- PANTALLA DE BIENVENIDA ---
-function WelcomeScreen({ onStartFlashcards, onStartExam }) {
+function WelcomeScreen({ onStartFlashcards }) {
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   return (
     <div className="min-h-screen bg-gradient-to-br from-amber-50 to-emerald-50 flex items-center justify-center p-4 relative overflow-hidden notranslate" translate="no">
@@ -666,7 +91,7 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
 
         <div className="bg-white/80 backdrop-blur-md p-8 md:p-12 rounded-3xl shadow-2xl text-center max-w-md w-full z-10 border border-white relative">
             <div className="absolute -top-4 -right-4 bg-yellow-400 text-yellow-900 text-xs font-bold px-3 py-1 rounded-full rotate-12 shadow-md animate-pulse flex items-center gap-1">
-                <PartyPopper size={14}/> EOI 1A2 Ready!
+                <PartyPopper size={14}/> EOI A2 Ready!
             </div>
             <div className="w-32 h-32 bg-white rounded-[2rem] flex items-center justify-center mx-auto mb-6 shadow-lg shadow-emerald-200 ring-8 ring-emerald-50">
                 <img src="/lamadrasa-mark.svg" alt="Logotipo de La Madrasa" className="w-full h-full" />
@@ -681,9 +106,6 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
             <div className="flex flex-col gap-4">
                 <button onClick={onStartFlashcards} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 text-lg">
                     <Grid size={24} /> Repaso de Vocabulario
-                </button>
-                <button onClick={onStartExam} className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-6 rounded-2xl shadow-lg transition-all active:scale-95 flex items-center justify-center gap-3 text-lg">
-                    <Activity size={24} /> Preparación Examen 1A2
                 </button>
                 <button onClick={() => setIsHelpOpen(true)} className="w-full bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 font-bold py-3 px-6 rounded-2xl shadow-sm transition-all active:scale-95 flex items-center justify-center gap-3">
                     <HelpCircle size={20} /> Ayuda de uso
@@ -703,13 +125,13 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
               <div className="p-5 text-left text-sm text-slate-600 space-y-5 overflow-y-auto">
                 <div>
                   <p className="font-bold text-slate-800">Repaso de vocabulario</p>
-                  <p>Sirve para estudiar las tarjetas una a una. Puedes buscar por texto, filtrar por pista o categoría y cambiar qué idioma aparece primero. Al pulsar una tarjeta cambia de cara: español, árabe y fonética.</p>
+                  <p>Sirve para estudiar las tarjetas una a una. Puedes buscar por texto, filtrar por familia temática y cambiar qué idioma aparece primero. Al pulsar una tarjeta cambia de cara: español, árabe y fonética.</p>
                 </div>
                 <div>
                   <p className="font-bold text-slate-800">Iconos y controles del vocabulario</p>
                   <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">
                     <p className="flex gap-2"><Search className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Buscar:</b> localiza tarjetas por español o árabe.</span></p>
-                    <p className="flex gap-2"><Filter className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Filtro:</b> muestra solo una pista o categoría.</span></p>
+                    <p className="flex gap-2"><Filter className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Filtro:</b> muestra solo una familia temática.</span></p>
                     <p className="flex gap-2"><Gamepad2 className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Juegos:</b> abre escucha, quiz, memoria y velocidad.</span></p>
                     <p className="flex gap-2"><Baseline className="w-4 h-4 shrink-0 text-emerald-700" /> <span><b>Vocales:</b> muestra u oculta harakat/diacríticos árabes.</span></p>
                     <p className="flex gap-2"><span className="font-black text-xs bg-slate-100 px-1.5 py-0.5 rounded">ES</span> <span><b>ES:</b> enseña primero el español.</span></p>
@@ -725,20 +147,12 @@ function WelcomeScreen({ onStartFlashcards, onStartExam }) {
                   <p>Son ejercicios cortos para automatizar vocabulario: escuchar y reconocer, elegir la traducción correcta, emparejar tarjetas o responder rápido antes de que acabe el tiempo.</p>
                 </div>
                 <div>
-                  <p className="font-bold text-slate-800">Preparación Examen 1A2</p>
-                  <p>Genera simulacros desde el material subido por el administrador. Puedes elegir cantidad de preguntas y modo: traducción de frases, audio con frase árabe escuchada, gramática A2 o mixto.</p>
-                </div>
-                <div>
-                  <p className="font-bold text-slate-800">Modo gramática</p>
-                  <p>No busca traducir una frase completa. Pregunta por la forma correcta de una estructura: pronombre sufijado, demostrativo, negación, posesión, concordancia, presente, anexión o partículas de lugar, siempre a partir de patrones del material.</p>
-                </div>
-                <div>
-                  <p className="font-bold text-slate-800">Errores locales</p>
-                  <p>Los fallos del simulacro se guardan solo en este navegador para que cada usuario tenga su propio repaso.</p>
+                  <p className="font-bold text-slate-800">Familias temáticas</p>
+                  <p>Cada tarjeta pertenece a una o varias familias de vocabulario de nivel A2 (Familia y Relaciones, Casa y Vivienda, Comida y Bebida, etc.). Usa el filtro para repasar una familia concreta.</p>
                 </div>
                 <div>
                   <p className="font-bold text-slate-800">Modo administrador</p>
-                  <p>Permite importar tarjetas, subir material de examen, añadir comentarios de prioridad y revisar la base de datos.</p>
+                  <p>Permite añadir e importar tarjetas, asignarles familias y revisar la base de datos.</p>
                 </div>
               </div>
             </div>
@@ -754,10 +168,11 @@ export default function App() {
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("Todos");
+  const [selectedFamilia, setSelectedFamilia] = useState("Todas");
   const [frontLanguage, setFrontLanguage] = useState(() => localStorage.getItem('pref_lang') || "spanish");
   const [showDiacritics, setShowDiacritics] = useState(() => safeGetStorage('pref_diacritics', true));
-  const [isAdminMode, setIsAdminMode] = useState(false);
+  const { isAdminMode, loading: authLoading, error: authError, signIn, signOut, clearError } = useAdminSession();
+  const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [editingCard, setEditingCard] = useState(null); 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isSmartImportOpen, setIsSmartImportOpen] = useState(false);
@@ -815,18 +230,23 @@ export default function App() {
   };
 
   const goToFlashcards = () => navigateTo('flashcards');
-  const goToExam = () => navigateTo('exam');
   const goToWelcome = () => {
     if (currentView === 'welcome') return;
     navigateTo('welcome', { replace: true });
   };
   
-  const handleAdminToggle = () => { if (isAdminMode) setIsAdminMode(false); else { const p = prompt("🔒 Contraseña:"); if (p === "1234") setIsAdminMode(true); } };
+  const handleAdminToggle = () => {
+    if (isAdminMode) { signOut(); }
+    else { clearError(); setIsLoginOpen(true); }
+  };
+
+  // Cerrar el formulario de login automáticamente cuando la sesión se activa.
+  useEffect(() => { if (isAdminMode) setIsLoginOpen(false); }, [isAdminMode]);
 
   const handleSaveCard = async (cardData) => {
     try {
       if (cardData.id) {
-        const { error } = await supabase.from('flashcards').update({ category: cardData.category, spanish: cardData.spanish, arabic: cardData.arabic, phonetic: cardData.phonetic }).eq('id', cardData.id);
+        const { error } = await supabase.from('flashcards').update({ familias: cardData.familias || [], spanish: cardData.spanish, arabic: cardData.arabic, phonetic: cardData.phonetic }).eq('id', cardData.id);
         if (error) throw error;
         setCards(prev => prev.map(c => c.id === cardData.id ? cardData : c));
       } else {
@@ -856,18 +276,12 @@ export default function App() {
     } catch (error) { alert("Error: " + error.message); }
   };
 
-  const categories = useMemo(() => {
-    const allTags = new Set();
-    cards.forEach(card => {
-      const tags = (card.category || "General").toString().split(';');
-      tags.forEach(tag => { if(tag.trim().length > 0) allTags.add(tag.trim()); });
-    });
-    const uniqueTags = Array.from(allTags);
-    const pistas = uniqueTags.filter(t => t.toLowerCase().startsWith('pista'));
-    const otros = uniqueTags.filter(t => !t.toLowerCase().startsWith('pista'));
-    pistas.sort((a, b) => { const numA = parseInt(a.match(/\d+/)?.[0] || 0); const numB = parseInt(b.match(/\d+/)?.[0] || 0); return numA - numB; });
-    otros.sort((a, b) => a.localeCompare(b));
-    return ["Todos", ...pistas, ...otros];
+  // Opciones de filtro: "Todas" + las familias oficiales A2 que realmente
+  // aparecen en alguna tarjeta (para no mostrar filtros vacíos).
+  const familiaOptions = useMemo(() => {
+    const present = new Set();
+    cards.forEach(card => getCardFamilias(card).forEach(f => present.add(f)));
+    return ["Todas", ...FAMILIAS_A2.filter(f => present.has(f))];
   }, [cards]);
 
   const filteredCards = useMemo(() => {
@@ -875,14 +289,15 @@ export default function App() {
     let result = cards.filter(card => {
       const s = normalizeForSearch(card.spanish || "");
       const a = normalizeForSearch(card.arabic || "");
-      return (s.includes(normalizedTerm) || a.includes(normalizedTerm)) && (selectedCategory === "Todos" || (card.category || "").includes(selectedCategory));
+      const matchesSearch = s.includes(normalizedTerm) || a.includes(normalizedTerm);
+      const matchesFamilia = selectedFamilia === "Todas" || getCardFamilias(card).includes(selectedFamilia);
+      return matchesSearch && matchesFamilia;
     });
-    if (selectedCategory === "Todos" && searchTerm === "") return shuffleArray(result);
+    if (selectedFamilia === "Todas" && searchTerm === "") return shuffleArray(result);
     return result;
-  }, [cards, searchTerm, selectedCategory]);
+  }, [cards, searchTerm, selectedFamilia]);
 
-  if (currentView === 'welcome') return <WelcomeScreen onStartFlashcards={goToFlashcards} onStartExam={goToExam} />;
-  if (currentView === 'exam') return <ExamPrepHub onBack={goToWelcome} apiKey={localStorage.getItem('openai_key')} isAdmin={isAdminMode} onToggleAdmin={handleAdminToggle} />;
+  if (currentView === 'welcome') return <WelcomeScreen onStartFlashcards={goToFlashcards} />;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 font-sans flex flex-col">
@@ -900,8 +315,8 @@ export default function App() {
             </div>
             <div className="relative md:w-64">
                 <Filter className="absolute left-3 top-2.5 w-4 h-4 text-white/50 pointer-events-none" />
-                <select value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer">
-                    {categories.map(cat => <option key={cat} value={cat} className="text-slate-800 bg-white">{cat}</option>)}
+                <select value={selectedFamilia} onChange={(e) => setSelectedFamilia(e.target.value)} className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer">
+                    {familiaOptions.map(fam => <option key={fam} value={fam} className="text-slate-800 bg-white">{fam}</option>)}
                 </select>
             </div>
             <div className="flex gap-2">
@@ -940,602 +355,22 @@ export default function App() {
       <div className="bg-white border-t border-slate-200 py-3">
         <DeveloperCredit />
       </div>
-      {isFormOpen && <CardFormModal card={editingCard} categories={categories.filter(c => c !== "Todos")} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
+      {isFormOpen && <CardFormModal card={editingCard} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
       {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} onImport={handleBulkImport} />}
       {isMaintenanceOpen && <AdvancedMaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} setCards={setCards} refreshCards={fetchAllCards} />}
       {isGamesHubOpen && <GamesHub onClose={() => setIsGamesHubOpen(false)} cards={cards} showDiacritics={showDiacritics} />}
+      {isLoginOpen && !isAdminMode && (
+        <AdminLoginForm
+          onSubmit={signIn}
+          loading={authLoading}
+          error={authError}
+          onClose={() => { clearError(); setIsLoginOpen(false); }}
+        />
+      )}
     </div>
   );
 }
 
-// --- TUTOR IA (EXAMEN 1A2) ---
-// --- TUTOR IA (EXAMEN 1A2) ---
-function ExamPrepHub({ onBack, apiKey, isAdmin, onToggleAdmin }) {
-    const [examApiKey, setExamApiKey] = useState(() => apiKey || localStorage.getItem('openai_key') || '');
-    const [activeTab, setActiveTab] = useState('test');
-    const [knowledge, setKnowledge] = useState([]);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [progress, setProgress] = useState({ current: 0, total: 0, text: "" });
-    const [textInput, setTextInput] = useState("");
-    const [priorityNotes, setPriorityNotes] = useState("");
-    const [test, setTest] = useState(null);
-    const [examOptions, setExamOptions] = useState(() => safeGetStorage('exam_1a2_options', { count: 10, mode: 'mixto', difficulty: 'examen' }));
-    const [answered, setAnswered] = useState({});
-    const [localHistory, setLocalHistory] = useState(() => safeGetStorage(EXAM_LOCAL_HISTORY_KEY, []));
-
-    useEffect(() => { setSafeStorage('exam_1a2_options', examOptions); }, [examOptions]);
-
-    // Cargar base de datos al inicio
-    useEffect(() => {
-        async function fetchKnowledge() { const { data } = await supabase.from('exam_knowledge').select('*'); if (data) setKnowledge(data); }
-        fetchKnowledge();
-    }, []);
-
-    useEffect(() => {
-        if (!isAdmin && activeTab === 'knowledge') setActiveTab('test');
-        if (isAdmin) setActiveTab('knowledge');
-    }, [isAdmin]);
-
-    // 1. Procesar Texto Libre
-    const handleProcessMaterial = async () => {
-        if (!textInput.trim()) return;
-        if (!examApiKey) { alert("API Key OpenAI requerida."); return; }
-        setIsProcessing(true);
-        setProgress({ current: 1, total: 1, text: "Analizando texto escrito..." });
-        try {
-            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-            const priorityBlock = priorityNotes.trim()
-                ? `
-NOTAS DE PRIORIDAD DEL ADMINISTRADOR:
-${priorityNotes.trim()}
-`
-                : "";
-            const prompt = `Actúa como profesor de Árabe nivel A2 de EOI.
-Analiza este material y extrae SOLO información útil para examen que esté literalmente apoyada en el texto.
-Prioriza y conserva frases árabe-español / español-árabe, vocabulario y verbos en presente.
-Incluye una sección llamada "FRASES BASE PARA EXAMEN" con pares de traducción cuando existan.
-Si hay NOTAS DE PRIORIDAD DEL ADMINISTRADOR, incorpóralas literalmente en una sección "PRIORIDAD PARA EXAMEN" y marca esas frases, temas o documentos como preferentes.
-No inventes frases ni tiempos verbales que no aparezcan o no puedan deducirse directamente del material.
-${priorityBlock}
-MATERIAL:
-${textInput}`;
-            const res = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.1 });
-            const storedContent = `${priorityNotes.trim() ? `PRIORIDAD PARA EXAMEN:
-${priorityNotes.trim()}
-
-` : ''}${res.choices[0].message.content}`;
-            const { data } = await supabase.from('exam_knowledge').insert([{ category: priorityNotes.trim() ? 'Material EOI · PRIORITARIO' : 'Material EOI', content: storedContent }]).select();
-            if (data) { setKnowledge([...knowledge, data[0]]); setTextInput(""); setPriorityNotes(""); alert("¡Material procesado y memorizado!"); }
-        } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); setProgress({ current: 0, total: 0, text: "" }); }
-    };
-
-    // 2. Procesar Archivos Subidos MÚLTIPLES (PDFs nativos + PDFs escaneados con visión)
-    const handleKnowledgeFile = async (e) => {
-        const files = Array.from(e.target.files || []);
-        if (files.length === 0) return;
-
-        if (!examApiKey) {
-            alert("API Key OpenAI requerida para procesar PDFs e imágenes.");
-            e.target.value = null;
-            return;
-        }
-
-        setIsProcessing(true);
-        let processedCount = 0;
-        let skippedCount = 0;
-        let lastDiagnostic = "";
-
-        try {
-            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-
-            for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
-                const file = files[fileIndex];
-                const currentFile = fileIndex + 1;
-                const fileLabel = `${currentFile}/${files.length}: ${file.name}`;
-
-                if (file.type.includes('pdf') || file.name.toLowerCase().endsWith('.pdf')) {
-                    setProgress({ current: 0, total: 0, text: `Abriendo PDF ${fileLabel}...` });
-                    const ab = await file.arrayBuffer();
-                    const pdf = await pdfjsLib.getDocument({ data: ab }).promise;
-
-                    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-                        const page = await pdf.getPage(pageNumber);
-                        const category = `PDF: ${file.name} (Pág ${pageNumber})`;
-                        setProgress({ current: pageNumber, total: pdf.numPages, text: `Leyendo página ${pageNumber} de ${pdf.numPages} (${file.name})...` });
-
-                        let pageText = await extractTextFromPdfPage(page);
-
-                        // Si el PDF es escaneado o basado en imágenes, la extracción nativa sale vacía:
-                        // entonces renderizamos la página a alta resolución y usamos visión/OCR.
-                        if (pageText.length < PDF_TEXT_MIN_CHARS) {
-                            setProgress({ current: pageNumber, total: pdf.numPages, text: `OCR visual en página ${pageNumber} de ${pdf.numPages} (${file.name})...` });
-                            const imageDataUrl = await renderPdfPageToDataUrl(page);
-                            const visionResult = await transcribeImageWithOpenAI(openai, imageDataUrl, `página ${pageNumber} del PDF ${file.name}`);
-                            pageText = visionResult.content;
-                            lastDiagnostic = visionResult.notes || visionResult.content || "Sin texto devuelto por visión.";
-                        }
-
-                        page.cleanup?.();
-
-                        if (pageText && pageText.length >= 10) {
-                            const summarized = await summarizeMaterialWithOpenAI(openai, pageText, category, priorityNotes);
-                            const { data, error } = await supabase
-                                .from('exam_knowledge')
-                                .insert([{ category: priorityNotes.trim() ? `${category} · PRIORITARIO` : category, content: `${priorityNotes.trim() ? `PRIORIDAD PARA EXAMEN:
-${priorityNotes.trim()}
-
-` : ''}${summarized}` }])
-                                .select();
-                            if (error) throw error;
-                            if (data) {
-                                setKnowledge(prev => [...prev, data[0]]);
-                                processedCount++;
-                            }
-                        } else {
-                            skippedCount++;
-                            lastDiagnostic = lastDiagnostic || `Página ${pageNumber}: no se detectó texto legible.`;
-                        }
-                    }
-                } else if (file.type.startsWith('image/')) {
-                    setProgress({ current: 1, total: 1, text: `Analizando imagen ${fileLabel}...` });
-                    const imageDataUrl = await fileToDataUrl(file);
-                    const visionResult = await transcribeImageWithOpenAI(openai, imageDataUrl, `imagen ${file.name}`);
-                    lastDiagnostic = visionResult.notes || visionResult.content || "Sin texto devuelto por visión.";
-
-                    if (visionResult.hasText && visionResult.content.length >= 10) {
-                        const category = `Foto: ${file.name}`;
-                        const summarized = await summarizeMaterialWithOpenAI(openai, visionResult.content, category, priorityNotes);
-                        const { data, error } = await supabase
-                            .from('exam_knowledge')
-                            .insert([{ category: priorityNotes.trim() ? `${category} · PRIORITARIO` : category, content: `${priorityNotes.trim() ? `PRIORIDAD PARA EXAMEN:
-${priorityNotes.trim()}
-
-` : ''}${summarized}` }])
-                            .select();
-                        if (error) throw error;
-                        if (data) {
-                            setKnowledge(prev => [...prev, data[0]]);
-                            processedCount++;
-                        }
-                    } else {
-                        skippedCount++;
-                    }
-                } else {
-                    skippedCount++;
-                    lastDiagnostic = `Formato no soportado: ${file.name}`;
-                }
-            }
-
-            if (processedCount > 0) {
-                alert(`Proceso completado. Bloques guardados: ${processedCount}.${skippedCount ? ` Páginas/archivos omitidos: ${skippedCount}.` : ""}`);
-            } else {
-                alert(`No se guardó ningún bloque. Diagnóstico: ${lastDiagnostic || "no se detectó texto legible en los archivos."}`);
-            }
-        } catch (err) {
-            console.error("Detalle del error al procesar archivos:", err);
-            alert("Error procesando archivos: " + (err?.message || err));
-        } finally {
-            setIsProcessing(false);
-            setProgress({ current: 0, total: 0, text: "" });
-            e.target.value = null;
-        }
-    };
-
-    // 3. Generador de Simulacro
-    const handleGenerateTest = async () => {
-        if (knowledge.length === 0) { alert("Sube material en Conocimiento primero."); return; }
-        setIsProcessing(true);
-        setAnswered({});
-        const desiredCount = Number(examOptions.count) || 10;
-        const mode = examOptions.mode || 'mixto';
-        const recentQuestionHints = getRecentQuestionHints();
-        try {
-            if (!examApiKey) {
-                if (mode === 'gramatica') {
-                    throw new Error('El modo Gramática necesita API Key para crear ejercicios de estructuras A2 a partir del material subido.');
-                }
-                const localTest = adaptLocalTestToMode(buildLocalTranslationTest(knowledge, mode === 'auditivo' ? desiredCount * 2 : desiredCount), examOptions.mode).slice(0, desiredCount);
-                if (localTest.length < desiredCount) {
-                    throw new Error(`No hay API Key y no he podido detectar al menos ${desiredCount} frases completas árabe-español con distractores de longitud parecida. El administrador debe subir material con frases bilingües o añadir la API Key para generar preguntas con IA.`);
-                }
-                rememberRecentExamQuestions(localTest);
-                setTest(localTest);
-                return;
-            }
-
-            const prioritizedKnowledge = knowledge.filter(k => /prioritario|prioridad|importante|examen/i.test(`${k.category || ''}\n${k.content || ''}`));
-            const regularKnowledge = knowledge.filter(k => !prioritizedKnowledge.includes(k));
-            const context = [...shuffleArray(prioritizedKnowledge), ...shuffleArray(regularKnowledge)]
-                .map(k => `FUENTE: ${k.category || 'Material subido'}\n${k.content}`)
-                .join("\n\n---\n\n")
-                .slice(0, 45000);
-            const openai = new OpenAI({ apiKey: examApiKey, dangerouslyAllowBrowser: true });
-            const candidateCount = Math.max(32, desiredCount * 4);
-            const modeRules = mode === 'gramatica'
-                ? `MODO GRAMÁTICA:
-- Genera SOLO preguntas de tipo "gramatica".
-- No hagas traducciones directas.
-- Pregunta por estructuras A2 del material: presente, negación, pronombres personales, pronombres sufijados, demostrativos, posesión, concordancia, género/número, anexión y partículas de lugar.
-- Usa formatos como completar hueco, elegir la forma correcta, detectar la frase correcta o elegir la explicación gramatical correcta.
-- Alterna formatos: hueco, forma correcta, error a detectar, concordancia, elección de partícula y transformación breve.
-- Las 4 opciones deben tener el mismo tipo y el mismo idioma entre sí.
-- Si hay un hueco con pronombres sufijados, demostrativos o formas de persona, la pregunta DEBE incluir la pista completa en español: significado objetivo, persona, género y número. Ejemplo válido: "Completa 'tu libro' dirigido a un hombre: كِتَابُ...". Ejemplo inválido: "Completa: كِتَابُ...".
-- Nunca generes preguntas donde varias opciones sean gramaticalmente correctas por falta de contexto.
-- La explicación debe indicar la regla o patrón del material.`
-                : mode === 'auditivo'
-                  ? `MODO AUDITIVO:
-- Genera SOLO preguntas de tipo "audio".
-- En "pregunta" escribe SOLO una frase árabe completa del material, sin "Traduce..." ni texto introductorio.
-- Las 4 opciones deben ser traducciones completas en español.
-- El usuario escuchará la frase árabe y elegirá la traducción correcta.
-- Varía longitud, tema y fuente de las frases árabes.`
-                  : mode === 'traduccion'
-                    ? `MODO TRADUCCIÓN:
-- Genera SOLO preguntas de tipo "traduccion".
-- Mezcla árabe→español y español→árabe.
-- Cada pregunta debe pedir traducir una frase completa del material.
-- Varía el enunciado: "Traduce...", "¿Qué significa...?", "¿Cómo se dice...?", "Elige la frase...".`
-                    : `MODO MIXTO:
-- Mezcla preguntas de tipo "traduccion", "audio" y "gramatica".
-- Aproximadamente un tercio de cada tipo si el material lo permite.
-- Traducción practica frases completas; audio usa frase árabe escuchable; gramática pregunta por estructuras A2.
-- Evita bloques monótonos: alterna tipo, dirección, tema y fuente.`;
-            const formatExample = mode === 'gramatica'
-                ? `{
-  "preguntas": [
-    {
-      "tipo": "gramatica",
-      "direccion": "GRAM → AR",
-      "pregunta": "Completa con el pronombre sufijado correcto: كِتَابُ...",
-      "opciones": ["كَ", "كِ", "هُ", "هَا"],
-      "correcta": 0,
-      "explicacion": "Se usa كَ para 'tu' masculino en anexión.",
-      "fuente": "..."
-    }
-  ]
-}`
-                : `{
-  "preguntas": [
-    {
-      "tipo": "${mode === 'auditivo' ? 'audio' : 'traduccion'}",
-      "direccion": "ar-es",
-      "pregunta": "${mode === 'auditivo' ? 'أَسْكُنُ فِي مَدْرِيد' : 'Traduce al español: أَسْكُنُ فِي مَدْرِيد'}",
-      "opciones": ["Vivo en Madrid", "Estudio en Madrid", "Voy a Madrid", "Trabajo en Madrid"],
-      "correcta": 0,
-      "explicacion": "Frase del material: أَسْكُنُ فِي مَدْرِيد",
-      "fuente": "..."
-    }
-  ]
-}`;
-            const prompt = `Eres profesor de Árabe nivel A2 de EOI.
-Actúa como profesor/a de árabe estándar moderno para estudiantes de nivel inicial A1-A2.
-Tu tarea es crear preguntas de simulacro y frases con sentido usando el vocabulario y estructuras de la base de conocimiento subida por el usuario.
-Configuración del simulacro:
-- Número final de preguntas: ${desiredCount}
-- Modo: ${examOptions.mode}
-- Dificultad: ${examOptions.difficulty}
-- Preguntas recientes a evitar: ${recentQuestionHints.length ? recentQuestionHints.join(' | ') : 'ninguna'}
-
-${modeRules}
-
-REGLAS BASE PARA CREAR FRASES Y RESPUESTAS:
-1. Usa exclusivamente o principalmente el vocabulario facilitado en la base de conocimiento.
-2. Crea frases naturales, sencillas y útiles para un examen de nivel inicial.
-3. Usa siempre verbos en presente cuando uses verbos.
-4. No uses pasado, futuro, condicional ni imperativo.
-5. No inventes vocabulario difícil si no es necesario.
-6. Mantén estructuras gramaticales simples.
-7. Las frases deben tener sentido real, no ser combinaciones aleatorias de palabras.
-8. Usa frases breves: entre 4 y 9 palabras aproximadamente.
-9. Incluye variedad de frases afirmativas, negativas e interrogativas.
-10. Usa, cuando sea posible: demostrativos هذا، هذه، ذلك، تلك; pronombres personales; posesivos sencillos; nombres comunes; adjetivos básicos; lugares y objetos cotidianos.
-11. Escribe el árabe con signos diacríticos cuando sea útil para estudiantes principiantes.
-12. Evita la nunación/tanwin salvo excepciones fijas que siempre la usan, como شكرًا، عفوًا، أيضًا، جدًا، طبعًا، دائمًا، أحيانًا، مرحبًا، أهلًا، صباحًا، مساءً.
-13. Añade siempre traducción al español cuando la respuesta correcta esté en español o cuando la explicación lo necesite.
-14. No incluyas explicaciones largas.
-15. No generes frases absurdas o artificiales.
-
-REGLAS TÉCNICAS DEL TEST:
-1. Crea ${candidateCount} preguntas candidatas dentro de la propiedad "preguntas"; la aplicación mostrará las ${desiredCount} mejores válidas.
-2. Todas las preguntas deben nacer del vocabulario, frases o estructuras del material subido. Puedes crear frases nuevas si usan ese vocabulario de forma natural.
-3. En traducción y audio, usa frases completas, nunca palabras sueltas. En gramática, puedes usar huecos o formas cortas si sirven para evaluar la estructura.
-4. Si aparece "PRIORIDAD PARA EXAMEN" o notas como "muy importante" / "saldrá en examen", usa ese material PRIMERO (8 preguntas candidatas mínimo).
-5. Prioriza verbos en presente salvo que el material de clase pida expresamente otra estructura A2.
-6. Evita repetir preguntas recientes, frases base recientes y respuestas correctas recientes cuando haya material alternativo suficiente.
-7. Varía fuentes, temas y estructuras: no concentres todo el simulacro en la misma página, lista o ejemplo.
-8. Sé creativo dentro del material: usa frases de casa, familia, trabajo, ciudad, nacionalidad, edad, ubicación y clase si aparecen; combina preguntas largas y cortas; no uses siempre el mismo sujeto ni el mismo verbo.
-9. Ordena las candidatas de forma variada: no agrupes todas las árabe→español primero ni todas las gramaticales juntas.
-10. DIRECCIÓN COHERENTE:
-   - Para "direccion": "ar-es", la pregunta debe ser una frase en ÁRABE y las 4 opciones deben estar en ESPAÑOL.
-   - Para "direccion": "es-ar", la pregunta debe ser una frase en ESPAÑOL y las 4 opciones deben estar en ÁRABE.
-   - Para "direccion": "GRAM → AR" o "GRAM → ES", aplica solo a preguntas de gramática.
-11. El texto de "pregunta" puede usar fórmulas variadas: "Traduce...", "¿Qué significa...?", "¿Cómo se dice...?", "Elige la frase...".
-   Excepción: tipo "audio" y tipo "gramatica" no deben empezar por "Traduce".
-12. Incluye exactamente 4 opciones por pregunta. Solo 1 opción es correcta.
-13. REGLA DE IDIOMA ESTRICTA:
-   - Pregunta en español → TODAS las 4 opciones en árabe (1 correcta, 3 falsas).
-   - Pregunta en árabe → TODAS las 4 opciones en español (1 correcta, 3 falsas).
-   - Pregunta auditiva → frase árabe como base y TODAS las 4 opciones en español.
-   - Pregunta gramatical → las 4 opciones deben estar en el mismo idioma entre sí.
-14. REGLA DE LONGITUD ESTRICTA PARA LAS 4 RESPUESTAS (±50%):
-   - Mide cada opción en caracteres.
-   - Opción correcta = referencia (X caracteres).
-   - Opciones falsas deben estar entre X*0.5 y X*1.5 caracteres.
-   - Si una opción no cumple, reemplázala por otra frase del material de longitud similar.
-15. Opciones incorrectas deben ser verosímiles (del material A2), no absurdas.
-15b. Solo puede haber una respuesta correcta. Si dos opciones son gramaticalmente posibles, añade más contexto a la pregunta o descarta esa pregunta.
-16. Las opciones también deben ser frases, no sustantivos aislados, lecciones, etiquetas, números ni títulos.
-17. No incluyas etiquetas ni metadatos en preguntas u opciones: elimina "Ejemplo:", "Fonética:", transcripciones latinas entre paréntesis y números de lección.
-18. Explicación breve: cita la frase o vocabulario base del material cuando exista, formato: "Base del material: [cita o vocabulario]".
-19. Si creas una frase nueva con vocabulario del material, marca: "[Frase creada con vocabulario del material: palabras base]".
-20. JSON únicamente, sin texto extra.
-
-Formato obligatorio:
-${formatExample}
-
-BASE DE CONOCIMIENTO:
-${context}`;
-            const res = await openai.chat.completions.create({
-                model: "gpt-4o",
-                messages: [{ role: "user", content: prompt }],
-                temperature: 0.45,
-                response_format: { type: "json_object" }
-            });
-            const raw = res.choices?.[0]?.message?.content || "";
-            const parsed = parseGeneratedQuestions(raw);
-            const allValid = parsed
-                .map((question, index) => normalizeGeneratedQuestion(question, index, examOptions.mode))
-                .filter(q => q && q.pregunta && Array.isArray(q.opciones) && q.opciones.length === 4 && q.correcta >= 0);
-            const freshValid = allValid.filter(q => !recentQuestionHints.includes(getQuestionFingerprint(q)));
-            const selectedFresh = diversifyExamQuestions(freshValid, desiredCount);
-            const fallbackPool = allValid.filter(q => !selectedFresh.some(selected => getQuestionFingerprint(selected) === getQuestionFingerprint(q)));
-            const selectedQuestions = selectedFresh.length >= desiredCount
-                ? selectedFresh
-                : [...selectedFresh, ...diversifyExamQuestions(fallbackPool, desiredCount - selectedFresh.length)];
-            if (selectedQuestions.length === 0) {
-                console.error('Respuesta IA sin preguntas utilizables:', raw);
-                throw new Error('No se pudo generar ninguna pregunta válida. Prueba con otro modo o revisa que haya vocabulario suficiente en el material.');
-            }
-            rememberRecentExamQuestions(selectedQuestions);
-            setTest(selectedQuestions);
-        } catch (e) { alert("Error: " + e.message); } finally { setIsProcessing(false); }
-    };
-
-    const handleAnswerQuestion = (questionIndex, optionIndex) => {
-        if (!test?.[questionIndex] || answered[questionIndex]) return;
-        const question = test[questionIndex];
-        const isCorrect = optionIndex === question.correcta;
-        setAnswered(prev => ({ ...prev, [questionIndex]: { optionIndex, isCorrect } }));
-        const nextHistory = addLocalExamHistoryEntry(buildExamHistoryEntry(question, optionIndex, isCorrect));
-        setLocalHistory(nextHistory);
-    };
-
-    const clearLocalHistory = () => {
-        setSafeStorage(EXAM_LOCAL_HISTORY_KEY, []);
-        setLocalHistory([]);
-    };
-
-    const mistakes = localHistory.filter(item => !item.isCorrect);
-    const answeredValues = Object.values(answered);
-    const correctCount = answeredValues.filter(item => item.isCorrect).length;
-
-    // 4. Ejercicio de escritura a mano: frase en español -> respuesta en árabe
-
-
-    return (
-        <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-            <header className="bg-indigo-700 text-white p-4 shadow flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <button onClick={onBack} className="p-2 bg-indigo-800 rounded-full hover:bg-indigo-600 transition"><ArrowLeft size={20}/></button>
-                    <h1 className="text-xl font-bold">Tutor IA - EOI 1A2</h1>
-                </div>
-                {/* CANDADO AÑADIDO A LA PANTALLA */}
-                <button onClick={onToggleAdmin} className={`p-2 rounded-lg transition-colors shadow-sm ${isAdmin ? 'bg-red-500 hover:bg-red-600' : 'bg-indigo-800 text-white/70 hover:bg-indigo-600'}`}>
-                    {isAdmin ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
-                </button>
-            </header>
-            
-            <div className="bg-white border-b flex overflow-x-auto">
-                {isAdmin && <button onClick={() => setActiveTab('knowledge')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'knowledge' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Database className="w-5 h-5"/> Admin · Conocimiento</button>}
-                <button onClick={() => setActiveTab('test')} className={`flex items-center gap-2 px-6 py-4 font-bold ${activeTab === 'test' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-slate-400 hover:bg-slate-50'}`}><Activity className="w-5 h-5"/> 1. Simulacro</button>
-
-            </div>
-            
-            <div className="flex-1 p-6 max-w-4xl mx-auto w-full">
-                
-                {/* PESTAÑA 1: CONOCIMIENTO */}
-                {activeTab === 'knowledge' && isAdmin && (
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up">
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-xl font-bold text-indigo-800">Alimentar a la IA</h2>
-                            {!isAdmin && <span className="bg-red-100 text-red-600 text-xs font-bold px-3 py-1 rounded-full uppercase flex items-center gap-1"><Lock className="w-3 h-3"/> Bloqueado</span>}
-                        </div>
-                        
-                        {isAdmin ? (
-                            <>
-                                <div className="mb-4 bg-indigo-50 border border-indigo-100 rounded-xl p-3">
-                                    <label className="block text-xs font-bold text-indigo-800 uppercase mb-2">OpenAI API Key</label>
-                                    <input
-                                        type="password"
-                                        placeholder="sk-..."
-                                        className="w-full p-2 border border-indigo-200 rounded-lg text-xs bg-white"
-                                        value={examApiKey}
-                                        onChange={(event) => {
-                                            setExamApiKey(event.target.value);
-                                            localStorage.setItem('openai_key', event.target.value);
-                                        }}
-                                        disabled={isProcessing}
-                                    />
-                                </div>
-                                <p className="text-sm text-slate-500 mb-4">Sube fotos de la pizarra o PDFs escaneados. La IA leerá primero el texto nativo del PDF y, si la página está basada en imagen, aplicará OCR visual con alta resolución.</p>
-
-                                <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-3">
-                                    <label className="block text-xs font-bold text-amber-800 uppercase mb-2">Comentarios de prioridad para este material</label>
-                                    <textarea
-                                        className="w-full h-20 p-3 border border-amber-200 rounded-lg text-sm bg-white"
-                                        placeholder={'Ej.: esto es muy importante; esto saldrá en el examen; priorizar demostrativos; practicar frases en presente...'}
-                                        value={priorityNotes}
-                                        onChange={(event) => setPriorityNotes(event.target.value)}
-                                        disabled={isProcessing}
-                                    />
-                                    <p className="text-[11px] text-amber-700 mt-2">Estas notas se guardan dentro del bloque y el simulacro las usa para priorizar unos documentos, frases o temas por encima de otros.</p>
-                                </div>
-                                
-                                {/* ZONA DE CARGA CON BARRA DE PROGRESO */}
-                                <div className="mb-4">
-                                    {isProcessing ? (
-                                        <div className="bg-indigo-50 border-2 border-indigo-200 rounded-xl p-6 text-center animate-pulse">
-                                            <Loader className="w-8 h-8 mx-auto mb-3 animate-spin text-indigo-600"/>
-                                            <p className="text-sm font-bold text-indigo-800 mb-2">{progress.text || "Procesando..."}</p>
-                                            {progress.total > 0 && (
-                                                <div className="w-full bg-indigo-200 rounded-full h-2.5 mt-3 overflow-hidden">
-                                                    <div className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${(progress.current / progress.total) * 100}%` }}></div>
-                                                </div>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <label className="block w-full cursor-pointer bg-slate-50 hover:bg-indigo-50 border-2 border-dashed border-indigo-200 text-indigo-500 rounded-xl p-6 text-center transition-colors">
-                                            <input type="file" accept=".pdf,image/*" multiple className="hidden" onChange={handleKnowledgeFile} />
-                                            <Upload className="w-8 h-8 mx-auto mb-2 opacity-80 text-indigo-600"/>
-                                            <span className="text-sm font-bold block">Haz clic aquí para seleccionar uno o VARIOS archivos</span>
-                                        </label>
-                                    )}
-                                </div>
-
-                                <textarea className="w-full h-32 p-3 border border-slate-300 rounded-xl mb-4 text-sm font-mono" placeholder="...O si tienes texto puro, pégalo aquí." value={textInput} onChange={(e) => setTextInput(e.target.value)} disabled={isProcessing} />
-                                
-                                <button onClick={handleProcessMaterial} disabled={isProcessing || !textInput} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:opacity-50 flex justify-center items-center gap-2">
-                                    {isProcessing ? <Loader className="animate-spin w-5 h-5"/> : <><Sparkles className="w-5 h-5"/> Extraer Texto y Memorizar</>}
-                                </button>
-                            </>
-                        ) : (
-                            <div className="bg-slate-50 border border-slate-200 p-8 rounded-xl text-center text-slate-500">
-                                <Lock className="w-12 h-12 mx-auto mb-3 opacity-20" />
-                                <h3 className="font-bold text-lg mb-2 text-slate-700">Modo Estudiante</h3>
-                                <p className="text-sm">Solo el Administrador puede subir nuevo material de estudio.<br/>Usa el candado de la esquina superior derecha para desbloquear esta función.</p>
-                            </div>
-                        )}
-                        
-                        <div className="mt-6 pt-4 border-t border-slate-100 flex justify-between">
-                            <span className="text-xs font-bold uppercase text-slate-400">Datos memorizados: {knowledge.length} bloques.</span>
-                        </div>
-                    </div>
-                )}
-                
-                {/* PESTAÑA 2: SIMULACRO */}
-                {activeTab === 'test' && (
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 animate-fade-in-up flex flex-col h-full">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Preguntas</label>
-                                <select value={examOptions.count} onChange={(e) => setExamOptions(prev => ({ ...prev, count: Number(e.target.value) }))} className="w-full p-3 border border-slate-200 rounded-xl bg-white font-bold text-slate-700">
-                                    <option value={5}>5 rápidas</option>
-                                    <option value={10}>10 estándar</option>
-                                    <option value={20}>20 intensivo</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Modo</label>
-                                <select value={examOptions.mode} onChange={(e) => setExamOptions(prev => ({ ...prev, mode: e.target.value }))} className="w-full p-3 border border-slate-200 rounded-xl bg-white font-bold text-slate-700">
-                                    <option value="mixto">Mixto 1A2</option>
-                                    <option value="traduccion">Traducción</option>
-                                    <option value="auditivo">Auditivo</option>
-                                    <option value="gramatica">Gramática</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Dificultad</label>
-                                <select value={examOptions.difficulty} onChange={(e) => setExamOptions(prev => ({ ...prev, difficulty: e.target.value }))} className="w-full p-3 border border-slate-200 rounded-xl bg-white font-bold text-slate-700">
-                                    <option value="normal">Normal</option>
-                                    <option value="examen">Examen</option>
-                                    <option value="repaso_errores">Repaso de errores</option>
-                                </select>
-                            </div>
-                        </div>
-                        <button onClick={handleGenerateTest} disabled={isProcessing || knowledge.length === 0} className="w-full py-4 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 disabled:opacity-50 flex justify-center items-center gap-2 text-lg mb-3 shadow-md">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <><PlayCircle className="w-6 h-6"/> Generar simulacro del material subido</>}</button>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
-                            <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
-                                <p className="text-xs font-bold text-indigo-500 uppercase">Sesión actual</p>
-                                <p className="text-lg font-black text-indigo-800">{answeredValues.length}{test ? `/${test.length}` : ''} respondidas</p>
-                            </div>
-                            <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-3">
-                                <p className="text-xs font-bold text-emerald-500 uppercase">Aciertos</p>
-                                <p className="text-lg font-black text-emerald-800">{correctCount}</p>
-                            </div>
-                            <div className="bg-rose-50 border border-rose-100 rounded-xl p-3 flex items-center justify-between gap-3">
-                                <div>
-                                    <p className="text-xs font-bold text-rose-500 uppercase">Errores locales</p>
-                                    <p className="text-lg font-black text-rose-800">{mistakes.length}</p>
-                                </div>
-                                {localHistory.length > 0 && <button onClick={clearLocalHistory} className="text-xs font-bold text-rose-700 bg-white border border-rose-200 px-3 py-2 rounded-lg hover:bg-rose-100">Vaciar</button>}
-                            </div>
-                        </div>
-                        <div className="flex-1 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                            {!test ? <div className="text-center text-slate-400 py-10">Genera un test para empezar.</div> : (
-                                <div className="space-y-6">{test.map((q, i) => {
-                                    const questionBody = q.audioText || getQuestionBody(q.pregunta);
-                                    const questionIsArabic = /[؀-ۿ]/.test(questionBody);
-                                    const answerState = answered[i];
-                                    return (
-                                    <div key={i} className="bg-white p-4 rounded-lg shadow-sm border border-indigo-100">
-                                        <div className="flex items-start justify-between gap-3 mb-3">
-                                            <div className="flex-1">
-                                              <p className="font-bold text-slate-800">
-                                                {i+1}. {q.tipo === 'audio' ? (
-                                                  <><span>Escucha la frase y elige la traducción correcta: </span><button type="button" onClick={() => playSmartAudio(q.audioText || questionBody)} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-orange-100 text-orange-800 hover:bg-orange-200 text-xs font-bold"><Volume2 className="w-4 h-4" /> Escuchar</button></>
-                                                ) : questionIsArabic ? (
-                                                  <>{q.pregunta.replace(questionBody, '').trim()} <ArabicTextWithAudio text={questionBody} className="font-arabic text-lg text-indigo-900" buttonClassName="align-middle" /></>
-                                                ) : q.pregunta}
-                                              </p>
-                                            </div>
-                                            <span className="shrink-0 text-[10px] uppercase font-bold px-2 py-1 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100">{q.tipo === 'audio' ? 'AUDIO' : q.tipo === 'gramatica' ? 'GRAM' : q.direccion === 'es-ar' ? 'ES → AR' : 'AR → ES'}</span>
-                                        </div>
-                                        <div className="grid grid-cols-1 gap-2">{q.opciones.map((op, idx) => {
-                                            const optionIsArabic = /[؀-ۿ]/.test(op);
-                                            const isChosen = answerState?.optionIndex === idx;
-                                            const isCorrectOption = idx === q.correcta;
-                                            let stateClass = "border-slate-200 hover:bg-indigo-50 hover:border-indigo-300";
-                                            if (answerState && isCorrectOption) stateClass = "border-emerald-400 bg-emerald-50 text-emerald-900";
-                                            if (answerState && isChosen && !isCorrectOption) stateClass = "border-rose-400 bg-rose-50 text-rose-900";
-                                            return (
-                                                <button key={idx} disabled={!!answerState} onClick={() => handleAnswerQuestion(i, idx)} className={`flex items-center gap-3 p-3 border rounded text-sm font-medium transition ${stateClass} ${answerState ? 'cursor-default' : 'cursor-pointer'} ${optionIsArabic ? 'font-arabic text-lg text-right justify-between' : 'text-left'}`} dir={optionIsArabic ? 'rtl' : 'ltr'}>
-                                                    {optionIsArabic ? <ArabicTextWithAudio text={op} className="flex-1 justify-between" /> : <span className="flex-1">{op}</span>}
-                                                </button>
-                                            );
-                                        })}</div>
-                                        {answerState && (
-                                            <div className={`mt-3 p-3 rounded-lg text-sm border ${answerState.isCorrect ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-rose-50 border-rose-100 text-rose-800'}`}>
-                                                <p className="font-bold">{answerState.isCorrect ? 'Correcto' : 'Incorrecto'}</p>
-                                                <p>{q.explicacion || 'Respuesta basada en el material subido.'}</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                    );
-                                })}</div>
-                            )}
-                        </div>
-                        {mistakes.length > 0 && (
-                            <div className="mt-4 bg-white border border-rose-100 rounded-xl p-4">
-                                <h3 className="font-bold text-rose-800 mb-3">Errores guardados en este navegador</h3>
-                                <div className="space-y-2 max-h-56 overflow-y-auto">
-                                    {mistakes.slice(0, 8).map((item, index) => (
-                                        <div key={`${item.id}-${item.date}-${index}`} className="text-sm bg-rose-50 border border-rose-100 rounded-lg p-3">
-                                            <p className="font-bold text-slate-800">{item.pregunta}</p>
-                                            <p className="text-rose-700">Tu respuesta: {item.selected}</p>
-                                            <p className="text-emerald-700">Correcta: {item.correct}</p>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
-                
-
-            </div>
-        </div>
-    );
-}
 // (DEJA AQUÍ DEBAJO EL RESTO DE TUS FUNCIONES: AdvancedMaintenanceModal, TableEditor, etc... QUE YA TENÍAS)
 
 // --- PANEL DE MANTENIMIENTO AVANZADO ---
@@ -1578,6 +413,7 @@ function AIAuditor({ cards, setCards, refreshCards }) {
         if (!apiKey) { alert("Necesitas tu API Key de OpenAI"); return; }
         setLoading(true); setAuditResults([]); setLogs(["Conectando con IA..."]);
         try {
+            const OpenAI = await loadOpenAI();
             const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
             let allIssues = []; const cardsToAudit = cards.slice(0, 150); 
             for (let i = 0; i < cardsToAudit.length; i += 15) {
@@ -1656,10 +492,60 @@ function TrueFalseGame({ onBack, onClose, cards, showDiacritics }) {
 }
 
 // --- MODALES ---
-function CardFormModal({ card, categories, onSave, onClose }) {
-  const [formData, setFormData] = useState(card || { category: 'General', spanish: '', arabic: '', phonetic: '' });
+function CardFormModal({ card, onSave, onClose }) {
+  const [formData, setFormData] = useState(() => ({
+    ...(card || {}),
+    spanish: card?.spanish || '',
+    arabic: card?.arabic || '',
+    phonetic: card?.phonetic || '',
+  }));
+  const [familias, setFamilias] = useState(() => getCardFamilias(card));
+
+  const toggleFamilia = (familia) => {
+    setFamilias(prev => prev.includes(familia) ? prev.filter(f => f !== familia) : [...prev, familia]);
+  };
+
+  const handleSave = () => {
+    if (!formData.spanish?.trim() || !formData.arabic?.trim()) { alert("Español y árabe son obligatorios."); return; }
+    onSave({ ...formData, familias });
+  };
+
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden"><div className="bg-emerald-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">{card ? 'Editar' : 'Nueva'} Tarjeta</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div><div className="p-6 space-y-4"><div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Categoría</label><input type="text" list="cat-list" className="w-full p-2 border rounded" value={formData.category} onChange={e=>setFormData({...formData, category: e.target.value})} /><datalist id="cat-list">{categories.map(c=><option key={c} value={c}/>)}</datalist></div><div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Español</label><input type="text" className="w-full p-2 border rounded" value={formData.spanish} onChange={e=>setFormData({...formData, spanish: e.target.value})} /></div><div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Árabe</label><input type="text" dir="rtl" className="w-full p-2 border rounded font-arabic" value={formData.arabic} onChange={e=>setFormData({...formData, arabic: e.target.value})} /></div><div><label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label><input type="text" className="w-full p-2 border rounded" value={formData.phonetic} onChange={e=>setFormData({...formData, phonetic: e.target.value})} /></div><button onClick={()=>onSave(formData)} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700">Guardar</button></div></div></div>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden max-h-[90vh] flex flex-col">
+        <div className="bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
+          <h2 className="font-bold">{card ? 'Editar' : 'Nueva'} Tarjeta</h2>
+          <button onClick={onClose} aria-label="Cerrar"><X className="w-5 h-5"/></button>
+        </div>
+        <div className="p-6 space-y-4 overflow-y-auto">
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Español</label>
+            <input type="text" className="w-full p-2 border rounded" value={formData.spanish} onChange={e=>setFormData({...formData, spanish: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Árabe</label>
+            <input type="text" dir="rtl" className="w-full p-2 border rounded font-arabic" value={formData.arabic} onChange={e=>setFormData({...formData, arabic: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label>
+            <input type="text" className="w-full p-2 border rounded" value={formData.phonetic} onChange={e=>setFormData({...formData, phonetic: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Familias temáticas</label>
+            <div className="grid grid-cols-1 gap-1.5 max-h-56 overflow-y-auto border border-slate-200 rounded-lg p-2">
+              {FAMILIAS_A2.map(familia => (
+                <label key={familia} className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer hover:bg-slate-50 rounded px-2 py-1">
+                  <input type="checkbox" className="accent-emerald-600 w-4 h-4" checked={familias.includes(familia)} onChange={() => toggleFamilia(familia)} />
+                  <span>{familia}</span>
+                </label>
+              ))}
+            </div>
+            {familias.length === 0 && <p className="text-xs text-amber-600 mt-1">Selecciona al menos una familia.</p>}
+          </div>
+          <button onClick={handleSave} className="w-full bg-emerald-600 text-white py-3 rounded-lg font-bold hover:bg-emerald-700">Guardar</button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1668,9 +554,9 @@ function SmartImportModal({ onClose, onImport }) {
   useEffect(() => { return () => { if (cameraStream) cameraStream.getTracks().forEach(t => t.stop()); }; }, [cameraStream]);
   const startCamera = async () => { try { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); setCameraStream(stream); if (videoRef.current) videoRef.current.srcObject = stream; } catch (e) { alert("Error cámara"); } };
   const capture = () => { if (!videoRef.current) return; const canvas = document.createElement('canvas'); canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight; canvas.getContext('2d').drawImage(videoRef.current, 0, 0); processImage(canvas.toDataURL('image/jpeg')); };
-  const processImage = async (base64) => { if (!apiKey) { alert("Requiere API Key"); return; } setIsProcessing(true); try { const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true }); const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: [{ type: "text", text: "Extract flashcards JSON: [{category, spanish, arabic, phonetic}]" }, { type: "image_url", image_url: { url: base64 } }] }] }); onImport(JSON.parse(res.choices[0].message.content.match(/\[.*\]/s)[0])); } catch (e) { alert(e.message); } finally { setIsProcessing(false); } };
+  const processImage = async (base64) => { if (!apiKey) { alert("Requiere API Key"); return; } setIsProcessing(true); try { const OpenAI = await loadOpenAI(); const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true }); const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: [{ type: "text", text: "Extract flashcards JSON: [{category, spanish, arabic, phonetic}]" }, { type: "image_url", image_url: { url: base64 } }] }] }); onImport(JSON.parse(res.choices[0].message.content.match(/\[.*\]/s)[0])); } catch (e) { alert(e.message); } finally { setIsProcessing(false); } };
   const processText = () => { try { const lines = text.split('\n').filter(l=>l.trim()); const newCards = lines.map(line => { const parts = line.split('|'); if (parts.length >= 3) { return { category: parts[0]?.trim() || 'General', spanish: parts[1]?.trim(), arabic: parts[2]?.trim(), phonetic: parts[3]?.trim() || '' }; } return { category: 'Importado', spanish: parts[0]?.trim(), arabic: parts[1]?.trim(), phonetic: parts[2]?.trim() || '' }; }).filter(c => c.spanish && c.arabic); if (newCards.length === 0) { alert("No se encontraron líneas válidas."); return; } onImport(newCards); } catch(e) { alert("Formato incorrecto"); } };
-  const handleFile = async (e) => { const file = e.target.files[0]; if (!file) return; if (file.type.includes('pdf')) { setIsProcessing(true); try { const ab = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument(ab).promise; let str = ""; for(let i=1; i<=pdf.numPages; i++) { const p = await pdf.getPage(i); const t = await p.getTextContent(); str += t.items.map(s=>s.str).join(" ") + "\n"; } setText(str); setActiveTab('text'); } catch(e) { alert("Error PDF"); } finally { setIsProcessing(false); } } else { const reader = new FileReader(); reader.onload = () => processImage(reader.result); reader.readAsDataURL(file); } };
+  const handleFile = async (e) => { const file = e.target.files[0]; if (!file) return; if (file.type.includes('pdf')) { setIsProcessing(true); try { const pdfjsLib = await loadPdfjs(); const ab = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument(ab).promise; let str = ""; for(let i=1; i<=pdf.numPages; i++) { const p = await pdf.getPage(i); const t = await p.getTextContent(); str += t.items.map(s=>s.str).join(" ") + "\n"; } setText(str); setActiveTab('text'); } catch(e) { alert("Error PDF"); } finally { setIsProcessing(false); } } else { const reader = new FileReader(); reader.onload = () => processImage(reader.result); reader.readAsDataURL(file); } };
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"><div className="bg-purple-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">Importar</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div><div className="flex border-b"><button onClick={()=>setActiveTab('text')} className={`flex-1 py-3 font-bold ${activeTab==='text'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Texto</button><button onClick={()=>setActiveTab('file')} className={`flex-1 py-3 font-bold ${activeTab==='file'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Archivo</button><button onClick={()=>{setActiveTab('camera'); startCamera();}} className={`flex-1 py-3 font-bold ${activeTab==='camera'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Cámara</button></div><div className="p-6 overflow-y-auto"><input type="password" placeholder="API Key (Opcional para texto, Obligatoria para img)" className="w-full p-2 mb-4 border rounded text-xs" value={apiKey} onChange={e=>{setApiKey(e.target.value); localStorage.setItem('openai_key',e.target.value)}}/>{activeTab === 'text' && ( <><textarea className="w-full h-40 p-2 border rounded text-xs font-mono" value={text} onChange={e=>setText(e.target.value)} placeholder="Categoría | Español | Árabe | Fonética"></textarea><button onClick={processText} className="w-full mt-4 bg-purple-600 text-white py-2 rounded-lg font-bold">Procesar Texto</button></> )}{activeTab === 'file' && ( <div className="border-2 border-dashed border-slate-300 rounded-lg h-40 flex flex-col items-center justify-center text-slate-400 relative"><input type="file" accept=".pdf,image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFile}/>{isProcessing ? <Loader className="animate-spin"/> : <><Upload className="mb-2"/> <p>Subir PDF o Imagen</p></>}</div> )}{activeTab === 'camera' && ( <div className="flex flex-col items-center"><div className="w-full aspect-video bg-black rounded-lg overflow-hidden mb-4 relative"><video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video></div><button onClick={capture} disabled={isProcessing} className="bg-purple-600 text-white p-4 rounded-full shadow-lg hover:bg-purple-700 disabled:opacity-50">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <Camera className="w-6 h-6"/>}</button></div> )}</div></div></div>
   );
@@ -1680,9 +566,9 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
   const [flipState, setFlipState] = useState(0); useEffect(() => { setFlipState(0); }, [frontLanguage]);
   const handleNextFace = () => { if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); };
   const playAudio = (e) => { e.stopPropagation(); playSmartAudio(data?.arabic || ""); };
-  const spanishText = data?.spanish || "Sin texto"; const arabicText = data?.arabic || "Sin texto"; const phoneticText = data?.phonetic || "N/A"; const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText); const tags = data?.category ? data.category.toString().split(';').map(t => t.trim()).filter(Boolean) : ['General'];
+  const spanishText = data?.spanish || "Sin texto"; const arabicText = data?.arabic || "Sin texto"; const phoneticText = data?.phonetic || "N/A"; const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText); const familias = getCardFamilias(data);
   let content = null;
   if (isAdmin) { content = <><h3 className="text-lg font-bold text-slate-800 line-clamp-2">{spanishText}</h3><h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayArabic}</h3><p className="text-sm font-mono text-amber-700 italic opacity-80">{phoneticText}</p></>; } else if (flipState === 2) { content = <><p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p><h3 className="text-lg font-mono text-amber-800 italic">{phoneticText}</h3></>; } else { const isFront = flipState === 0; const currentLang = isFront ? frontLanguage : (frontLanguage === 'spanish' ? 'arabic' : 'spanish'); if (currentLang === 'spanish') { content = <><p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p><h3 className="text-xl font-bold text-slate-800">{spanishText}</h3></>; } else { content = <><p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p><h3 className="text-3xl font-arabic text-emerald-900 mb-4" dir="rtl">{displayArabic}</h3><button onClick={playAudio} className="p-2 bg-emerald-200 text-emerald-800 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button></>; } }
   let bgClass = "bg-white border-slate-200 text-slate-800"; if (!isAdmin) { if (flipState === 0) bgClass = "bg-orange-50 border-orange-100 text-slate-800"; if (flipState === 1) bgClass = "bg-emerald-50 border-emerald-200 text-emerald-900"; if (flipState === 2) bgClass = "bg-amber-100 border-amber-200 text-amber-900"; }
-  return ( <div onClick={handleNextFace} className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}>{isAdmin && ( <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}><button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button><button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button></div> )}<div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">{content}</div><div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">{tags.map((tag, i) => (<span key={i} className="text-[10px] uppercase font-bold tracking-widest bg-black/5 px-2 py-0.5 rounded-full text-slate-500 opacity-70 whitespace-nowrap">{tag}</span>))}</div></div> );
+  return ( <div onClick={handleNextFace} className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}>{isAdmin && ( <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}><button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button><button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button></div> )}<div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">{content}</div><div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">{familias.length > 0 ? familias.map((familia, i) => (<span key={i} className="text-[10px] font-bold tracking-wide bg-emerald-600/10 text-emerald-700 px-2 py-0.5 rounded-full whitespace-nowrap">{familia}</span>)) : (<span className="text-[10px] font-bold tracking-wide bg-slate-200 text-slate-400 px-2 py-0.5 rounded-full">Sin familia</span>)}</div></div> );
 }

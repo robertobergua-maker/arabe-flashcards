@@ -11,9 +11,10 @@ jobs:
     steps:
       - name: Ping flashcards table
         env:
-          SUPABASE_URL: https://ggecznwbxpwybxmvmuog.supabase.co
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
+          test -n "$SUPABASE_URL"
           test -n "$SUPABASE_ANON_KEY"
           curl --fail-with-body --silent --show-error \
             --get "$SUPABASE_URL/rest/v1/flashcards" \
