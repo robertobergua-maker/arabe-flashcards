@@ -39,6 +39,8 @@ const safeGetStorage = (key, fallback) => { try { const saved = localStorage.get
 const getCardType = (card) => { if (!card) return 'word'; if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase'; return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word'; };
 const playSmartAudio = (text) => { if (!text) return; try { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'ar-SA'; utterance.rate = 0.7; const voices = window.speechSynthesis.getVoices(); const preferredVoice = voices.find(v => v.lang.includes('ar')); if (preferredVoice) utterance.voice = preferredVoice; window.speechSynthesis.speak(utterance); } catch (e) { console.error("Audio error", e); } };
 const APP_VIEWS = new Set(['welcome', 'flashcards']);
+// Valor especial del filtro (solo admin) para ver tarjetas con confianza baja.
+const PENDIENTES_REVISAR = '⚠ Pendientes de revisar';
 const getViewFromHash = () => {
   const hashView = window.location.hash.replace(/^#\/?/, '');
   return APP_VIEWS.has(hashView) ? hashView : '';
@@ -243,14 +245,23 @@ export default function App() {
   // Cerrar el formulario de login automáticamente cuando la sesión se activa.
   useEffect(() => { if (isAdminMode) setIsLoginOpen(false); }, [isAdminMode]);
 
+  // Si se sale del modo admin con el filtro "Pendientes de revisar" activo,
+  // volver a "Todas" para no dejar un filtro no disponible seleccionado.
+  useEffect(() => {
+    if (!isAdminMode && selectedFamilia === PENDIENTES_REVISAR) setSelectedFamilia('Todas');
+  }, [isAdminMode, selectedFamilia]);
+
   const handleSaveCard = async (cardData) => {
     try {
+      // Editada/creada a mano por el admin -> confianza 'alta'.
       if (cardData.id) {
-        const { error } = await supabase.from('flashcards').update({ familias: cardData.familias || [], spanish: cardData.spanish, arabic: cardData.arabic, phonetic: cardData.phonetic }).eq('id', cardData.id);
+        const updateData = { familias: cardData.familias || [], familias_confianza: 'alta', spanish: cardData.spanish, arabic: cardData.arabic, phonetic: cardData.phonetic };
+        const { error } = await supabase.from('flashcards').update(updateData).eq('id', cardData.id);
         if (error) throw error;
-        setCards(prev => prev.map(c => c.id === cardData.id ? cardData : c));
+        setCards(prev => prev.map(c => c.id === cardData.id ? { ...cardData, familias_confianza: 'alta' } : c));
       } else {
-        const { id, ...newCardData } = cardData;
+        const { id, ...rest } = cardData;
+        const newCardData = { ...rest, familias_confianza: 'alta' };
         const { data, error } = await supabase.from('flashcards').insert([newCardData]).select();
         if (error) throw error;
         if (data) setCards(prev => [...prev, data[0]]);
@@ -281,16 +292,22 @@ export default function App() {
   const familiaOptions = useMemo(() => {
     const present = new Set();
     cards.forEach(card => getCardFamilias(card).forEach(f => present.add(f)));
-    return ["Todas", ...FAMILIAS_A2.filter(f => present.has(f))];
-  }, [cards]);
+    const base = ["Todas", ...FAMILIAS_A2.filter(f => present.has(f))];
+    // Filtro especial solo para admin: tarjetas con confianza baja.
+    if (isAdminMode) base.push(PENDIENTES_REVISAR);
+    return base;
+  }, [cards, isAdminMode]);
 
   const filteredCards = useMemo(() => {
     const normalizedTerm = normalizeForSearch(searchTerm);
+    const pendientes = selectedFamilia === PENDIENTES_REVISAR;
     let result = cards.filter(card => {
       const s = normalizeForSearch(card.spanish || "");
       const a = normalizeForSearch(card.arabic || "");
       const matchesSearch = s.includes(normalizedTerm) || a.includes(normalizedTerm);
-      const matchesFamilia = selectedFamilia === "Todas" || getCardFamilias(card).includes(selectedFamilia);
+      const matchesFamilia = pendientes
+        ? card.familias_confianza === 'baja'
+        : (selectedFamilia === "Todas" || getCardFamilias(card).includes(selectedFamilia));
       return matchesSearch && matchesFamilia;
     });
     if (selectedFamilia === "Todas" && searchTerm === "") return shuffleArray(result);

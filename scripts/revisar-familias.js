@@ -208,9 +208,19 @@ async function fetchCards() {
   return all;
 }
 
-async function updateCardFamilies(id, familias) {
-  const { error } = await supabase.from('flashcards').update({ familias }).eq('id', id);
-  if (error) throw error;
+async function updateCardFamilies(id, familias, confianza) {
+  const { error } = await supabase
+    .from('flashcards')
+    .update({ familias, familias_confianza: confianza })
+    .eq('id', id);
+  if (error) {
+    if (/familias_confianza/.test(error.message)) {
+      const retry = await supabase.from('flashcards').update({ familias }).eq('id', id);
+      if (retry.error) throw retry.error;
+      return;
+    }
+    throw error;
+  }
 }
 
 // --- Prompt de revisión -----------------------------------------------------
@@ -397,7 +407,7 @@ async function modoApplyAlta() {
       if (propuestas.length === 0) { ignorados += 1; continue; } // no dejamos sin familia por "alta"
 
       try {
-        await updateCardFamilies(card.id, propuestas);
+        await updateCardFamilies(card.id, propuestas, r.confianza);
         aplicados += 1;
         console.log(`\n   ✅ #${card.id} "${card.spanish}" -> ${propuestas.join(', ')}`);
       } catch (error) {
@@ -462,10 +472,11 @@ async function modoApplyCsv() {
     }
 
     try {
-      await updateCardFamilies(id, propuestas);
+      // Edición revisada a mano: confianza 'alta'.
+      await updateCardFamilies(id, propuestas, 'alta');
       aplicados += 1;
       if (espanol) aprendidos.push({ espanol, familias: propuestas });
-      console.log(`   ✅ #${id} -> ${propuestas.join(', ')}`);
+      console.log(`   ✅ #${id} -> ${propuestas.join(', ')} (alta)`);
     } catch (error) {
       console.log(`   ❌ #${id}: ${error.message}`);
       fallidos += 1;

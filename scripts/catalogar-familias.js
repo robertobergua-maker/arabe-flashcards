@@ -16,7 +16,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
-import { sanitizeFamilias, buildFamiliasPromptBlock } from '../src/constants/familias.js';
+import { ensureFamilias, sanitizeConfianza, buildFamiliasPromptBlock } from '../src/constants/familias.js';
 import { buildFewShotBlock } from './_fewshot.js';
 
 // --- Configuración ---------------------------------------------------------
@@ -118,7 +118,8 @@ Reglas de clasificación (OBLIGATORIAS):
 - Vehículos (coche, autobús, tren) → "Transporte y viajes", aunque lleven adjetivo.
 - Personas genéricas (hombre, mujer, gente, chico) y nombres propios de personas → "Personas y nombres propios", NO "Datos personales".
 - Partículas y preposiciones que NO son de lugar ("con, por", "a, para") → "Preguntas y conectores".
-- Si NINGUNA familia de la lista encaja, devuelve un array de familias VACÍO ([]). NO inventes ni fuerces una familia.
+- TODA tarjeta DEBE recibir al menos una familia: NUNCA devuelvas un array vacío. Si dudas o ninguna encaja del todo, elige la MÁS CERCANA y marca "confianza": "baja".
+- Indica además una "confianza" por tarjeta: "alta" (seguro), "media" (razonable) o "baja" (dudoso / familia más cercana).
 - NO inventes familias nuevas ni variantes. NO uses etiquetas como "Pista", "Vocabulario lección X", nombres de lección ni categorías del material original.
 - Devuelve el NOMBRE de la familia tal cual aparece en la lista.
 ${buildFewShotBlock()}
@@ -139,10 +140,10 @@ async function classifyBatch(batch) {
   const userPrompt = `Clasifica estas tarjetas. Devuelve un objeto JSON con esta forma exacta:
 {
   "resultados": [
-    { "id": <id numérico de la tarjeta>, "familias": ["Familia exacta de la lista", ...] }
+    { "id": <id numérico de la tarjeta>, "familias": ["Familia exacta de la lista", ...], "confianza": "alta|media|baja" }
   ]
 }
-Incluye TODAS las tarjetas recibidas, cada una con su id original.
+Incluye TODAS las tarjetas recibidas, cada una con su id original. Nunca dejes "familias" vacío.
 
 TARJETAS:
 ${JSON.stringify(payload, null, 2)}`;
@@ -170,20 +171,31 @@ ${JSON.stringify(payload, null, 2)}`;
   for (const item of resultados) {
     const id = item?.id;
     if (id === undefined || id === null) continue;
-    byId.set(Number(id), sanitizeFamilias(item.familias));
+    // Garantiza familia (nunca vacío); si hubo que forzar el fallback, baja.
+    const { familias, forzada } = ensureFamilias(item.familias);
+    const confianza = forzada ? 'baja' : sanitizeConfianza(item.confianza);
+    byId.set(Number(id), { familias, confianza });
   }
   return byId;
 }
 
 /**
- * Actualiza la columna `familias` (text[]) de una tarjeta en Supabase.
+ * Actualiza `familias` (text[]) y `familias_confianza` (text) de una tarjeta.
+ * Si la columna familias_confianza no existe aún, reintenta solo con familias.
  */
-async function updateCardFamilies(id, familias) {
+async function updateCardFamilies(id, familias, confianza) {
   const { error } = await supabase
     .from('flashcards')
-    .update({ familias })
+    .update({ familias, familias_confianza: confianza })
     .eq('id', id);
-  if (error) throw error;
+  if (error) {
+    if (/familias_confianza/.test(error.message)) {
+      const retry = await supabase.from('flashcards').update({ familias }).eq('id', id);
+      if (retry.error) throw retry.error;
+      return;
+    }
+    throw error;
+  }
 }
 
 // --- Programa principal -----------------------------------------------------
@@ -202,7 +214,7 @@ async function main() {
   const batches = chunk(cards, BATCH_SIZE);
   let updated = 0;
   let failed = 0;
-  const unclassified = []; // tarjetas sin ninguna familia válida (no se tocan)
+  const bajas = []; // tarjetas asignadas con confianza baja (pendientes de revisar)
 
   for (let i = 0; i < batches.length; i += 1) {
     const batch = batches[i];
@@ -218,21 +230,19 @@ async function main() {
     }
 
     for (const card of batch) {
-      const familias = classification.get(Number(card.id)) || [];
-
-      // Sin familia válida: no se actualiza; se registra como "sin clasificar".
-      if (familias.length === 0) {
-        unclassified.push(card);
-        continue;
-      }
+      // Nunca sin familia: si la IA no devolvió nada para esta tarjeta,
+      // recurrimos al fallback con confianza baja.
+      const result = classification.get(Number(card.id)) || ensureFamiliasFallback();
+      const { familias, confianza } = result;
+      if (confianza === 'baja') bajas.push(card);
 
       if (DRY_RUN) {
-        console.log(`\n   [dry-run] #${card.id} "${card.spanish || card.arabic}" -> ${familias.join(', ')}`);
+        console.log(`\n   [dry-run] #${card.id} "${card.spanish || card.arabic}" -> ${familias.join(', ')} (${confianza})`);
         updated += 1;
         continue;
       }
       try {
-        await updateCardFamilies(card.id, familias);
+        await updateCardFamilies(card.id, familias, confianza);
         updated += 1;
       } catch (error) {
         console.log(`\n   ❌ No se pudo actualizar #${card.id}: ${error.message}`);
@@ -250,14 +260,20 @@ async function main() {
   console.log(`   ${DRY_RUN ? 'A actualizar' : 'Actualizadas'}: ${updated}`);
   if (failed > 0) console.log(`   Con errores:  ${failed}`);
 
-  if (unclassified.length > 0) {
-    console.log(`\n⚠️  Sin clasificar (no se ${DRY_RUN ? 'actualizarían' : 'actualizaron'}): ${unclassified.length}`);
-    for (const card of unclassified) {
+  if (bajas.length > 0) {
+    console.log(`\n⚠️  Confianza baja (pendientes de revisar): ${bajas.length}`);
+    for (const card of bajas) {
       console.log(`   - #${card.id}: "${card.spanish || ''}" / "${card.arabic || ''}"`);
     }
   }
 
   if (DRY_RUN) console.log('\n   (DRY-RUN: no se escribió nada en Supabase)');
+}
+
+// Fallback local por si la IA ni siquiera devuelve la tarjeta en su respuesta.
+function ensureFamiliasFallback() {
+  const { familias } = ensureFamilias([]);
+  return { familias, confianza: 'baja' };
 }
 
 main().catch((error) => {

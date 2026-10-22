@@ -181,6 +181,32 @@ export const FAMILIAS_A2 = FAMILIAS_A2_META.map((f) => f.nombre);
 // Conjunto para validaciones rápidas (O(1)).
 export const FAMILIAS_A2_SET = new Set(FAMILIAS_A2);
 
+// Niveles de confianza válidos para la columna `familias_confianza`.
+export const CONFIANZAS = ['alta', 'media', 'baja'];
+export const CONFIANZAS_SET = new Set(CONFIANZAS);
+
+// Familia de reserva para los SCRIPTS: garantiza que ninguna tarjeta se guarde
+// sin familia cuando, pese al prompt, la IA no devuelve ninguna válida. Es un
+// cajón genérico para términos sueltos; estas tarjetas se marcan confianza
+// 'baja' para que salgan en "Pendientes de revisar". NO la usa la UI.
+export const FAMILIA_FALLBACK = 'Personas y nombres propios';
+
+/**
+ * Garantiza al menos una familia válida (para los scripts: "nunca sin familia").
+ * Devuelve { familias, forzada }: si hubo que recurrir al fallback, forzada=true.
+ */
+export function ensureFamilias(input) {
+  const limpias = sanitizeFamilias(input);
+  if (limpias.length > 0) return { familias: limpias, forzada: false };
+  return { familias: [FAMILIA_FALLBACK], forzada: true };
+}
+
+/** Normaliza un valor de confianza a 'alta'|'media'|'baja' (por defecto 'baja'). */
+export function sanitizeConfianza(value) {
+  const v = String(value || '').trim().toLowerCase();
+  return CONFIANZAS_SET.has(v) ? v : 'baja';
+}
+
 /**
  * Normaliza un array arbitrario de familias dejando solo las válidas, sin
  * duplicados y preservando el orden oficial. Descarta cualquier nombre que no

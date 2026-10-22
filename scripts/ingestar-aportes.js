@@ -24,7 +24,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
-import { sanitizeFamilias, buildFamiliasPromptBlock } from '../src/constants/familias.js';
+import {
+  sanitizeFamilias,
+  ensureFamilias,
+  sanitizeConfianza,
+  buildFamiliasPromptBlock,
+} from '../src/constants/familias.js';
 import { buildFewShotBlock } from './_fewshot.js';
 
 // --- Configuración ---------------------------------------------------------
@@ -159,7 +164,8 @@ Reglas de clasificación (OBLIGATORIAS):
 - Vehículos (coche, autobús, tren) → "Transporte y viajes", aunque lleven adjetivo.
 - Personas genéricas (hombre, mujer, gente, chico) y nombres propios de personas → "Personas y nombres propios", NO "Datos personales".
 - Partículas y preposiciones que NO son de lugar ("con, por", "a, para") → "Preguntas y conectores".
-- Si NINGUNA familia de la lista encaja, devuelve un array de familias VACÍO ([]). NO inventes ni fuerces una familia.
+- TODA entrada DEBE recibir al menos una familia: NUNCA devuelvas un array vacío. Si dudas o ninguna encaja del todo, elige la MÁS CERCANA y marca "confianza": "baja".
+- Indica además una "confianza" por entrada: "alta" (seguro), "media" (razonable) o "baja" (dudoso / familia más cercana).
 - NO inventes familias nuevas ni variantes. NO uses etiquetas como "Pista", "Vocabulario lección X", números de lección ni categorías del material.
 - Devuelve el NOMBRE de la familia tal cual aparece en la lista.
 - Conserva el árabe en escritura árabe (con vocalización/harakat si aparece en el original).
@@ -172,10 +178,10 @@ function buildExtractionUserText(sourceLabel) {
 Devuelve un objeto JSON con esta forma exacta:
 {
   "entradas": [
-    { "arabe": "término en árabe", "espanol": "significado en español", "familias": ["Familia exacta de la lista", ...] }
+    { "arabe": "término en árabe", "espanol": "significado en español", "familias": ["Familia exacta de la lista", ...], "confianza": "alta|media|baja" }
   ]
 }
-No incluyas entradas sin árabe o sin español.`;
+No incluyas entradas sin árabe o sin español. Nunca dejes "familias" vacío.`;
 }
 
 async function extractFromText(textContent, sourceLabel) {
@@ -254,11 +260,15 @@ function parseEntries(rawContent) {
         : [];
 
   return list
-    .map((item) => ({
-      arabe: String(item?.arabe || item?.arabic || '').trim(),
-      espanol: String(item?.espanol || item?.spanish || '').trim(),
-      familias: sanitizeFamilias(item?.familias),
-    }))
+    .map((item) => {
+      const { familias, forzada } = ensureFamilias(item?.familias);
+      return {
+        arabe: String(item?.arabe || item?.arabic || '').trim(),
+        espanol: String(item?.espanol || item?.spanish || '').trim(),
+        familias,
+        confianza: forzada ? 'baja' : sanitizeConfianza(item?.confianza),
+      };
+    })
     .filter((entry) => entry.arabe && entry.espanol);
 }
 
@@ -326,31 +336,21 @@ async function processEntry(entry, index, stats) {
     return;
   }
 
-  // Nueva tarjeta. Si no tiene ninguna familia válida, NO se inserta:
-  // se registra como "sin clasificar" para revisión manual.
-  if (!entry.familias || entry.familias.length === 0) {
-    stats.sinClasificar.push(entry);
-    console.log(`[SIN CLASIFICAR] "${entry.espanol}" (${entry.arabe}) — no se inserta.`);
-    return;
-  }
-
+  // Nueva tarjeta. Gracias a ensureFamilias, SIEMPRE tiene al menos una familia.
   const record = {
     arabic: entry.arabe,
     spanish: entry.espanol,
     familias: entry.familias,
+    familias_confianza: entry.confianza,
     arabe_normalizado: normalized,
   };
 
   if (!DRY_RUN) {
-    const { data, error } = await supabase
-      .from('flashcards')
-      .insert([record])
-      .select('id')
-      .single();
+    const { error } = await supabase.from('flashcards').insert([record]).select('id').single();
     if (error) {
-      // Si la columna opcional arabe_normalizado no existe, reintenta sin ella.
-      if (/arabe_normalizado/.test(error.message)) {
-        const { arabe_normalizado, ...fallback } = record;
+      // Reintenta sin las columnas opcionales que puedan no existir todavía.
+      if (/familias_confianza|arabe_normalizado/.test(error.message)) {
+        const { familias_confianza, arabe_normalizado, ...fallback } = record;
         const retry = await supabase.from('flashcards').insert([fallback]).select('id').single();
         if (retry.error) { console.error(`   ❌ Error insertando "${entry.espanol}": ${retry.error.message}`); return; }
       } else {
@@ -363,7 +363,8 @@ async function processEntry(entry, index, stats) {
   // Registrar en el índice para evitar duplicados dentro del mismo lote.
   index.set(normalized, { id: null, familias: entry.familias });
   stats.nuevos += 1;
-  console.log(`[NUEVO] Insertada: "${entry.espanol}" -> ${entry.familias.join(', ')}`);
+  if (entry.confianza === 'baja') stats.bajas += 1;
+  console.log(`[NUEVO] Insertada: "${entry.espanol}" -> ${entry.familias.join(', ')} (${entry.confianza})`);
 }
 
 // --- Programa principal -----------------------------------------------------
@@ -397,7 +398,7 @@ async function main() {
   const index = await buildExistingIndex();
   console.log(`   ${index.size} término(s) únicos ya en la base de datos.`);
 
-  const stats = { nuevos: 0, actualizados: 0, omitidos: 0, archivos: 0, sinClasificar: [] };
+  const stats = { nuevos: 0, actualizados: 0, omitidos: 0, archivos: 0, bajas: 0 };
 
   for (const file of files) {
     const kind = classifyFile(file);
@@ -435,13 +436,7 @@ async function main() {
   console.log(`   Nuevas insertadas:   ${stats.nuevos}`);
   console.log(`   Actualizadas:        ${stats.actualizados}`);
   console.log(`   Omitidas (ya estaban): ${stats.omitidos}`);
-
-  if (stats.sinClasificar.length > 0) {
-    console.log(`\n⚠️  Sin clasificar (no se insertaron): ${stats.sinClasificar.length}`);
-    for (const entry of stats.sinClasificar) {
-      console.log(`   - "${entry.espanol}" / "${entry.arabe}"`);
-    }
-  }
+  if (stats.bajas > 0) console.log(`   ⚠️  Nuevas con confianza baja (pendientes de revisar): ${stats.bajas}`);
 
   if (DRY_RUN) console.log('\n   (DRY-RUN: no se escribió nada en Supabase)');
 }
