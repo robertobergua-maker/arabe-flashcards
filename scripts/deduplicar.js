@@ -65,9 +65,87 @@ function normalizarEspanol(texto) {
     .trim();
 }
 
+// --- Fusión de columnas -----------------------------------------------------
+
+const norm = (v) => (v === null || v === undefined ? '' : String(v).trim());
+
+// Harakat/tashkil para medir vocalización del árabe.
+const HARAKAT_RE = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g;
+function contarHarakat(texto) {
+  const m = String(texto || '').match(HARAKAT_RE);
+  return m ? m.length : 0;
+}
+
+// Signos diacríticos típicos de transliteración académica del árabe.
+const DIACRITICOS_TRANSLIT_RE = /[āīūēōâîûḏṯḥṣḍṭẓġšʿʾčžñ]/i;
+function tieneDiacriticosTranslit(texto) {
+  return DIACRITICOS_TRANSLIT_RE.test(String(texto || ''));
+}
+
+// category: unión de todos los valores distintos del grupo (sin repetir,
+// recortados), separados por "; ".
+function fusionarCategory(group) {
+  const vistos = new Set();
+  const out = [];
+  for (const c of group) {
+    const v = norm(c.category);
+    if (!v) continue;
+    if (vistos.has(v)) continue;
+    vistos.add(v);
+    out.push(v);
+  }
+  return out.join('; ');
+}
+
+// phonetic: preferir con diacríticos; si empatan, la más larga; desempate, minúscula.
+function fusionarPhonetic(group) {
+  const candidatos = group.map((c) => norm(c.phonetic)).filter(Boolean);
+  if (candidatos.length === 0) return '';
+  return [...candidatos].sort((a, b) => {
+    const da = tieneDiacriticosTranslit(a) ? 1 : 0;
+    const db = tieneDiacriticosTranslit(b) ? 1 : 0;
+    if (da !== db) return db - da;                 // con diacríticos primero
+    if (a.length !== b.length) return b.length - a.length; // más larga primero
+    const la = a === a.toLowerCase() ? 1 : 0;
+    const lb = b === b.toLowerCase() ? 1 : 0;
+    return lb - la;                                // minúscula primero
+  })[0];
+}
+
+// arabic: preferir la de más harakat; empate -> la más larga; desempate estable.
+function fusionarArabic(group) {
+  const candidatos = group.map((c) => norm(c.arabic)).filter(Boolean);
+  if (candidatos.length === 0) return '';
+  return [...candidatos].sort((a, b) => {
+    const ha = contarHarakat(a);
+    const hb = contarHarakat(b);
+    if (ha !== hb) return hb - ha;
+    return b.length - a.length;
+  })[0];
+}
+
+// Calcula los valores fusionados finales para la tarjeta conservada.
+// spanish se mantiene SIEMPRE el de la conservada.
+function calcularFinales(group, conservar) {
+  const final_arabic = fusionarArabic(group) || norm(conservar.arabic);
+  return {
+    final_arabic,
+    final_spanish: norm(conservar.spanish),
+    final_phonetic: fusionarPhonetic(group) || norm(conservar.phonetic),
+    final_category: fusionarCategory(group),
+    final_arabe_normalizado: normalizarArabe(final_arabic),
+  };
+}
+
 // --- CSV (; + BOM, como revisar) --------------------------------------------
 
-const CSV_HEADERS = ['grupo', 'tipo', 'accion', 'id', 'arabe', 'espanol', 'transliteracion', 'familias'];
+const CSV_HEADERS = [
+  'grupo', 'tipo', 'accion', 'id',
+  'arabe', 'espanol', 'transliteracion', 'category', 'familias',
+  // Solo se rellenan en la fila "conservar": resultado de la fusión que se
+  // aplicará. Puedes editarlas en Excel antes de --apply-csv.
+  'final_arabic', 'final_spanish', 'final_phonetic', 'final_category',
+];
 const COL_SEP = ';';
 const FAM_SEP = '|';
 const BOM = '\ufeff';
@@ -89,7 +167,12 @@ function writeCsv(rows) {
       csvEscape(r.arabe),
       csvEscape(r.espanol),
       csvEscape(r.transliteracion),
+      csvEscape(r.category),
       csvEscape(r.familias.join(FAM_SEP)),
+      csvEscape(r.final_arabic ?? ''),
+      csvEscape(r.final_spanish ?? ''),
+      csvEscape(r.final_phonetic ?? ''),
+      csvEscape(r.final_category ?? ''),
     ].join(COL_SEP));
   }
   fs.mkdirSync(DOCS_DIR, { recursive: true });
@@ -224,6 +307,7 @@ async function modoDetectar() {
     const grupoId = i + 1;
     const conservar = elegirConservar(g.group);
     const familiasUnion = unionFamilias(g.group);
+    const finales = calcularFinales(g.group, conservar);
     if (g.tipo === 'exacto') exactos += 1; else probables += 1;
 
     for (const card of g.group) {
@@ -237,8 +321,14 @@ async function modoDetectar() {
         arabe: card.arabic || '',
         espanol: card.spanish || '',
         transliteracion: card.phonetic || '',
+        category: card.category || '',
         // En la fila "conservar" mostramos la unión; en las demás, sus familias.
         familias: esConservar ? familiasUnion : (Array.isArray(card.familias) ? card.familias : []),
+        // Los final_* (resultado de la fusión) solo en la fila "conservar".
+        final_arabic: esConservar ? finales.final_arabic : '',
+        final_spanish: esConservar ? finales.final_spanish : '',
+        final_phonetic: esConservar ? finales.final_phonetic : '',
+        final_category: esConservar ? finales.final_category : '',
       });
     }
   });
@@ -267,6 +357,18 @@ async function backupTabla() {
   return file;
 }
 
+// Actualiza la conservada; si la columna opcional arabe_normalizado no existe,
+// reintenta sin ella para no bloquear la fusión del resto de campos.
+async function applyUpdate(id, update) {
+  const { error } = await supabase.from('flashcards').update(update).eq('id', id);
+  if (error && /arabe_normalizado/.test(error.message) && 'arabe_normalizado' in update) {
+    const rest = { ...update };
+    delete rest.arabe_normalizado;
+    return supabase.from('flashcards').update(rest).eq('id', id);
+  }
+  return { error };
+}
+
 async function modoApplyCsv() {
   if (!fs.existsSync(CSV_PATH)) {
     console.error(`❌ No existe el CSV: ${CSV_PATH}. Ejecuta antes "npm run deduplicar".`);
@@ -290,7 +392,7 @@ async function modoApplyCsv() {
   }
 
   // 3. Reconstruir grupos desde el CSV.
-  const grupos = new Map(); // grupo -> { conservarId, familias:Set, eliminar:[] }
+  const grupos = new Map(); // grupo -> { conservarId, familias:Set, eliminar:[], finales }
   for (let i = 1; i < rows.length; i += 1) {
     const row = rows[i];
     const grupo = String(row[col.grupo] || '').trim();
@@ -298,17 +400,28 @@ async function modoApplyCsv() {
     const id = Number(String(row[col.id] || '').trim());
     if (!grupo || !Number.isInteger(id)) continue;
 
-    if (!grupos.has(grupo)) grupos.set(grupo, { conservarId: null, familias: new Set(), eliminar: [] });
+    if (!grupos.has(grupo)) grupos.set(grupo, { conservarId: null, familias: new Set(), eliminar: [], finales: null });
     const g = grupos.get(grupo);
 
     // La unión de familias se arma con TODAS las filas del grupo presentes.
     for (const fam of splitFamilias(col.familias !== -1 ? row[col.familias] : '')) g.familias.add(fam);
 
-    if (accion === 'conservar') g.conservarId = id;
-    else if (accion === 'eliminar') g.eliminar.push(id);
+    if (accion === 'conservar') {
+      g.conservarId = id;
+      // Lee los valores finales editables de la fila conservar (si existen).
+      const cell = (name) => (col[name] !== -1 ? String(row[col[name]] ?? '').trim() : '');
+      g.finales = {
+        arabic: cell('final_arabic'),
+        spanish: cell('final_spanish'),
+        phonetic: cell('final_phonetic'),
+        category: cell('final_category'),
+      };
+    } else if (accion === 'eliminar') {
+      g.eliminar.push(id);
+    }
   }
 
-  // 4. Aplicar grupo a grupo: fusionar familias en la conservada y eliminar el resto.
+  // 4. Aplicar grupo a grupo: fusionar en la conservada y eliminar el resto.
   let eliminadas = 0;
   let fusionadas = 0;
   let saltados = 0;
@@ -322,11 +435,16 @@ async function modoApplyCsv() {
 
     const familiasFinal = sanitizeFamilias([...g.familias]);
 
-    // 4a. Actualiza familias de la conservada (unión del grupo).
-    const { error: upErr } = await supabase
-      .from('flashcards')
-      .update({ familias: familiasFinal })
-      .eq('id', g.conservarId);
+    // 4a. Construye la actualización de la conservada: familias + columnas
+    //     fusionadas (final_*). Solo incluye un campo si viene con valor en el CSV.
+    const update = { familias: familiasFinal };
+    const f = g.finales || {};
+    if (f.arabic) { update.arabic = f.arabic; update.arabe_normalizado = normalizarArabe(f.arabic); }
+    if (f.spanish) update.spanish = f.spanish;
+    if (f.phonetic) update.phonetic = f.phonetic;
+    if (f.category) update.category = f.category;
+
+    const { error: upErr } = await applyUpdate(g.conservarId, update);
     if (upErr) {
       console.error(`   ❌ Grupo ${grupoId}: error actualizando #${g.conservarId}: ${upErr.message}. Se omite el grupo.`);
       saltados += 1;
