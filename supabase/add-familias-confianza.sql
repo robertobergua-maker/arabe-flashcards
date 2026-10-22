@@ -6,6 +6,9 @@
 --   'baja'  -> la IA dudó / usó la familia más cercana (pendiente de revisar)
 --
 -- Cómo usar: ejecútalo en Supabase -> SQL Editor. NO se ejecuta automáticamente.
+
+
+
 -- Es idempotente: se puede lanzar más de una vez sin error.
 
 alter table public.flashcards

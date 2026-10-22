@@ -1,21 +1,29 @@
 // scripts/_fewshot.js
 //
-// Helper COMPARTIDO por revisar / catalogar / ingestar para los ejemplos
-// few-shot de clasificación de familias. Los ejemplos viven en
-// scripts/ejemplos-familias.json como una lista de { espanol, familias }.
+// Helper few-shot para los scripts (catalogar / ingestar / revisar).
+// La parte PURA (buildFewShotBlock) se reexporta desde la fuente canónica
+// compartida; el lado Node (leer/escribir el JSON) vive aquí.
 //
-// - loadEjemplos(): lee el archivo (tolerante a inexistente/corrupto).
-// - buildFewShotBlock(): construye el bloque de texto para inyectar en el prompt.
-// - addEjemplos(): añade correcciones nuevas sin duplicar y con variedad por
-//   familia, respetando un máximo total. Devuelve cuántas añadió.
+// El JSON de ejemplos se movió a supabase/functions/_shared/ejemplos-familias.json
+// (fuente única), para que lo compartan scripts y Edge Functions.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { sanitizeFamilias } from '../src/constants/familias.js';
+import { sanitizeFamilias } from '../supabase/functions/_shared/familias.js';
+
+// Reexporta la parte pura desde la fuente canónica compartida.
+export { buildFewShotBlock } from '../supabase/functions/_shared/fewshot.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const EJEMPLOS_PATH = path.join(__dirname, 'ejemplos-familias.json');
+export const EJEMPLOS_PATH = path.join(
+  __dirname,
+  '..',
+  'supabase',
+  'functions',
+  '_shared',
+  'ejemplos-familias.json',
+);
 
 // Máximo de ejemplos que se añaden en una sola pasada de --apply-csv.
 export const MAX_EJEMPLOS_POR_PASADA = 30;
@@ -48,18 +56,6 @@ export function loadEjemplos() {
 }
 
 /**
- * Construye el bloque de texto few-shot para el prompt. Si no hay ejemplos,
- * devuelve cadena vacía (el prompt funciona igual sin ellos).
- */
-export function buildFewShotBlock(ejemplos = loadEjemplos()) {
-  if (!ejemplos.length) return '';
-  const lineas = ejemplos
-    .map((e) => `- "${e.espanol}" -> ${e.familias.join(', ')}`)
-    .join('\n');
-  return `\nEJEMPLOS DE CLASIFICACIÓN CORRECTA (sigue este criterio):\n${lineas}\n`;
-}
-
-/**
  * Escribe la lista completa de ejemplos en el JSON (formateado).
  */
 export function saveEjemplos(ejemplos) {
@@ -72,14 +68,11 @@ export function saveEjemplos(ejemplos) {
  * - prioriza VARIEDAD: reparte por familia principal para no saturar de una sola;
  * - respeta el máximo `limit` de añadidos en esta pasada.
  * Devuelve { added, total }.
- *
- * `candidatos`: lista de { espanol, familias }.
  */
 export function addEjemplos(candidatos, limit = MAX_EJEMPLOS_POR_PASADA) {
   const actuales = loadEjemplos();
   const vistos = new Set(actuales.map((e) => normalizeKey(e.espanol)));
 
-  // Candidatos válidos, saneados y no duplicados (ni entre sí ni con los actuales).
   const limpios = [];
   for (const c of candidatos) {
     const espanol = String(c?.espanol || '').trim();
@@ -91,8 +84,6 @@ export function addEjemplos(candidatos, limit = MAX_EJEMPLOS_POR_PASADA) {
     limpios.push({ espanol, familias });
   }
 
-  // Selección con variedad: recorre por rondas tomando 1 ejemplo de cada
-  // familia principal (la primera del array) hasta llegar al límite.
   const porFamilia = new Map();
   for (const ej of limpios) {
     const principal = ej.familias[0];
