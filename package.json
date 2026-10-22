@@ -11,7 +11,8 @@
     "catalogar": "node scripts/catalogar-familias.js",
     "ingestar": "node scripts/ingestar-aportes.js",
     "revisar": "node scripts/revisar-familias.js",
-    "sugerir-familias": "node scripts/sugerir-familias.js"
+    "sugerir-familias": "node scripts/sugerir-familias.js",
+    "deduplicar": "node scripts/deduplicar.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",

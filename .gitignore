@@ -20,6 +20,10 @@ dist-ssr
 # CSV de revisión de familias (intermedio, editable en Excel)
 docs/revision-familias.csv
 
+# Deduplicación: CSV intermedio y backups de la tabla
+docs/duplicados.csv
+docs/backup-*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
