@@ -111,6 +111,13 @@ Reglas de clasificación (OBLIGATORIAS):
 - Oficios y personas que trabajan (peluquero, médico, vendedor) → "Trabajo y profesiones", aunque exista un lugar con nombre parecido.
 - Colores de pelo y de ojos (moreno, rubio) → "Colores" y "Descripción física".
 - Si la frase menciona un miembro de la familia (hijos, hermanos), incluye "Familia".
+- Dinero (dólar, cheque, euro) → "Compras y ropa".
+- Ocio, música, prensa y fotografía (periódico, piano, cámara) → "Rutina y tiempo libre".
+- Gafas y accesorios personales → "Compras y ropa".
+- Un color suelto SIEMPRE → "Colores".
+- Vehículos (coche, autobús, tren) → "Transporte y viajes", aunque lleven adjetivo.
+- Personas genéricas (hombre, mujer, gente, chico) y nombres propios de personas → "Personas y nombres propios", NO "Datos personales".
+- Partículas y preposiciones que NO son de lugar ("con, por", "a, para") → "Preguntas y conectores".
 - Si NINGUNA familia de la lista encaja, devuelve un array de familias VACÍO ([]). NO inventes ni fuerces una familia.
 - NO inventes familias nuevas ni variantes. NO uses etiquetas como "Pista", "Vocabulario lección X", nombres de lección ni categorías del material original.
 - Devuelve el NOMBRE de la familia tal cual aparece en la lista.

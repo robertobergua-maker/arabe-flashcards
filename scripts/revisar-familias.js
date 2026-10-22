@@ -233,7 +233,14 @@ Reglas de clasificación (OBLIGATORIAS):
 - Oficios y personas que trabajan (peluquero, médico, vendedor) → "Trabajo y profesiones", aunque exista un lugar con nombre parecido.
 - Colores de pelo y de ojos (moreno, rubio) → "Colores" y "Descripción física".
 - Si la frase menciona un miembro de la familia (hijos, hermanos), incluye "Familia".
-- Si NINGUNA familia encaja, propón un array VACÍO ([]).
+- Dinero (dólar, cheque, euro) → "Compras y ropa".
+- Ocio, música, prensa y fotografía (periódico, piano, cámara) → "Rutina y tiempo libre".
+- Gafas y accesorios personales → "Compras y ropa".
+- Un color suelto SIEMPRE → "Colores".
+- Vehículos (coche, autobús, tren) → "Transporte y viajes", aunque lleven adjetivo.
+- Personas genéricas (hombre, mujer, gente, chico) y nombres propios de personas → "Personas y nombres propios", NO "Datos personales".
+- Partículas y preposiciones que NO son de lugar ("con, por", "a, para") → "Preguntas y conectores".
+- TODA tarjeta DEBE recibir al menos una familia: NUNCA propongas un array vacío. Si dudas o ninguna encaja del todo, elige la familia MÁS CERCANA y marca "confianza": "baja".
 ${buildFewShotBlock()}
 Para CADA tarjeta decide:
 - "ok": true si las familias actuales ya son correctas; false si propondrías otras.

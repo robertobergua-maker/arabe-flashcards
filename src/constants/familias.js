@@ -116,6 +116,24 @@ export const FAMILIAS_A2_META = [
     descripcion: 'Rutina diaria, aficiones, deportes y ocio.',
     ejemplos: ['¿qué haces esta tarde?', 'me levanto', 'leer', 'fútbol'],
   },
+  {
+    nombre: 'Países y nacionalidades',
+    grupo: 'vocabulario',
+    descripcion: 'Países, gentilicios e idiomas.',
+    ejemplos: ['Marruecos', 'España', 'egipcio', 'árabe (idioma)'],
+  },
+  {
+    nombre: 'Personas y nombres propios',
+    grupo: 'vocabulario',
+    descripcion: 'Palabras genéricas para personas (hombre, mujer, gente, chico) y nombres propios de personas, incluidos los usados para practicar lectura.',
+    ejemplos: ['hombre', 'mujer', 'Layla', 'Napoleón', 'Cleopatra'],
+  },
+  {
+    nombre: 'Animales y naturaleza',
+    grupo: 'vocabulario',
+    descripcion: 'Animales, plantas, paisaje y astros.',
+    ejemplos: ['camello', 'pájaro', 'árbol', 'mar', 'sol', 'luna'],
+  },
 
   // --- Gramática y estructuras ---
   // Asignar SOLO cuando la tarjeta trate de ese punto gramatical, no por defecto.
