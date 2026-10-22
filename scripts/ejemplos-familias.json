@@ -189,5 +189,204 @@
     "familias": [
       "Rutina y tiempo libre"
     ]
+  },
+  {
+    "espanol": "robot",
+    "familias": [
+      "Rutina y tiempo libre"
+    ]
+  },
+  {
+    "espanol": "moscas",
+    "familias": [
+      "Animales y naturaleza"
+    ]
+  },
+  {
+    "espanol": "bazar",
+    "familias": [
+      "Compras y ropa"
+    ]
+  },
+  {
+    "espanol": "gente",
+    "familias": [
+      "Personas y nombres propios"
+    ]
+  },
+  {
+    "espanol": "baréin",
+    "familias": [
+      "Países y nacionalidades"
+    ]
+  },
+  {
+    "espanol": "Verde",
+    "familias": [
+      "Colores"
+    ]
+  },
+  {
+    "espanol": "él es su padre",
+    "familias": [
+      "Familia",
+      "Pronombres, posesivos y demostrativos"
+    ]
+  },
+  {
+    "espanol": "¿Ahora?",
+    "familias": [
+      "Tiempo, fechas y clima"
+    ]
+  },
+  {
+    "espanol": "de, sobre, acerca de",
+    "familias": [
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "¿Rashid, dónde está la alfombra?",
+    "familias": [
+      "Muebles y objetos",
+      "Ubicación y preposiciones"
+    ]
+  },
+  {
+    "espanol": "¿Cómo escribimos en árabe 'reloj'?",
+    "familias": [
+      "Clase y estudios",
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "Bien, gracias a Dios",
+    "familias": [
+      "Saludos y cortesía",
+      "Emociones y estados"
+    ]
+  },
+  {
+    "espanol": "Tiene (su edad es) un año",
+    "familias": [
+      "Datos personales",
+      "Números"
+    ]
+  },
+  {
+    "espanol": "Voy a casa",
+    "familias": [
+      "Casa y habitaciones",
+      "Verbos y conjugación"
+    ]
+  },
+  {
+    "espanol": "En el número diez",
+    "familias": [
+      "Números",
+      "Ubicación y preposiciones"
+    ]
+  },
+  {
+    "espanol": "Vivo en Valencia",
+    "familias": [
+      "Ciudad y lugares"
+    ]
+  },
+  {
+    "espanol": "Es alto, delgado, rubio, fuerte, guapo, de ojos azules y con mucho dinero",
+    "familias": [
+      "Descripción física",
+      "Compras y ropa",
+      "Colores"
+    ]
+  },
+  {
+    "espanol": "¿Hasan, dónde está la mesa?",
+    "familias": [
+      "Ubicación y preposiciones",
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "¿Samira, hay [algún] hospital cerca de tu casa?",
+    "familias": [
+      "Salud",
+      "Casa y habitaciones",
+      "Ubicación y preposiciones"
+    ]
+  },
+  {
+    "espanol": "No (lo) entiendo",
+    "familias": [
+      "Emociones y estados",
+      "Clase y estudios"
+    ]
+  },
+  {
+    "espanol": "El libro del profesor",
+    "familias": [
+      "Trabajo y profesiones",
+      "Clase y estudios"
+    ]
+  },
+  {
+    "espanol": "Esto es una botella",
+    "familias": [
+      "Comida y bebida"
+    ]
+  },
+  {
+    "espanol": "¿Cómo vas a la escuela, Yamila?",
+    "familias": [
+      "Transporte y viajes",
+      "Clase y estudios",
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "¿Qué es esto?",
+    "familias": [
+      "Pronombres, posesivos y demostrativos",
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "piano",
+    "familias": [
+      "Rutina y tiempo libre"
+    ]
+  },
+  {
+    "espanol": "oso panda",
+    "familias": [
+      "Animales y naturaleza"
+    ]
+  },
+  {
+    "espanol": "Dólar",
+    "familias": [
+      "Compras y ropa"
+    ]
+  },
+  {
+    "espanol": "Niña",
+    "familias": [
+      "Personas y nombres propios"
+    ]
+  },
+  {
+    "espanol": "Europa",
+    "familias": [
+      "Países y nacionalidades"
+    ]
+  },
+  {
+    "espanol": "ese joven es mi amigo favorito",
+    "familias": [
+      "Familia",
+      "Descripción física",
+      "Pronombres, posesivos y demostrativos"
+    ]
   }
 ]
