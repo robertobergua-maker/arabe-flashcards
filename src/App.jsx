@@ -289,14 +289,25 @@ export default function App() {
 
   // Opciones de filtro: "Todas" + las familias oficiales A2 que realmente
   // aparecen en alguna tarjeta (para no mostrar filtros vacíos).
+  const pendientesCount = useMemo(
+    () => cards.filter(c => c.familias_confianza === 'baja').length,
+    [cards]
+  );
+
   const familiaOptions = useMemo(() => {
     const present = new Set();
     cards.forEach(card => getCardFamilias(card).forEach(f => present.add(f)));
-    const base = ["Todas", ...FAMILIAS_A2.filter(f => present.has(f))];
+    const base = [
+      { value: 'Todas', label: 'Todas' },
+      ...FAMILIAS_A2.filter(f => present.has(f)).map(f => ({ value: f, label: f })),
+    ];
     // Filtro especial solo para admin: tarjetas con confianza baja.
-    if (isAdminMode) base.push(PENDIENTES_REVISAR);
+    // Se muestra SIEMPRE en modo admin, aunque el recuento sea 0.
+    if (isAdminMode) {
+      base.push({ value: PENDIENTES_REVISAR, label: `⚠ Pendientes de revisar (${pendientesCount})` });
+    }
     return base;
-  }, [cards, isAdminMode]);
+  }, [cards, isAdminMode, pendientesCount]);
 
   const filteredCards = useMemo(() => {
     const normalizedTerm = normalizeForSearch(searchTerm);
@@ -333,7 +344,7 @@ export default function App() {
             <div className="relative md:w-64">
                 <Filter className="absolute left-3 top-2.5 w-4 h-4 text-white/50 pointer-events-none" />
                 <select value={selectedFamilia} onChange={(e) => setSelectedFamilia(e.target.value)} className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer">
-                    {familiaOptions.map(fam => <option key={fam} value={fam} className="text-slate-800 bg-white">{fam}</option>)}
+                    {familiaOptions.map(opt => <option key={opt.value} value={opt.value} className="text-slate-800 bg-white">{opt.label}</option>)}
                 </select>
             </div>
             <div className="flex gap-2">
