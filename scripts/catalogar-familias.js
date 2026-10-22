@@ -7,6 +7,12 @@
 //   node scripts/catalogar-familias.js            -> solo tarjetas sin familias
 //   node scripts/catalogar-familias.js --force    -> recataloga TODAS las tarjetas
 //   node scripts/catalogar-familias.js --dry-run  -> no escribe en Supabase, solo muestra el plan
+//   node scripts/catalogar-familias.js --solo-clase
+//                                                 -> NO toca familias; rellena la
+//                                                    dimensión `clase_palabra` (y `tipo`
+//                                                    si falta) de las tarjetas que aún
+//                                                    no tienen clase. Combinable con
+//                                                    --force (todas) y --dry-run.
 //
 // Variables de entorno requeridas (ver .env.example):
 //   SUPABASE_URL
@@ -17,6 +23,7 @@ import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { ensureFamilias, sanitizeConfianza, buildFamiliasPromptBlock } from '../src/constants/familias.js';
+import { buildClasesPromptBlock, sanitizeClase } from '../src/constants/clases.js';
 import { buildFewShotBlock } from './_fewshot.js';
 
 // --- Configuración ---------------------------------------------------------
@@ -30,6 +37,7 @@ const PAGE_SIZE = 1000; // tarjetas por página al leer de Supabase
 const args = process.argv.slice(2);
 const FORCE = args.includes('--force');
 const DRY_RUN = args.includes('--dry-run');
+const SOLO_CLASE = args.includes('--solo-clase');
 
 // --- Validación de entorno -------------------------------------------------
 
@@ -198,9 +206,197 @@ async function updateCardFamilies(id, familias, confianza) {
   }
 }
 
+// === Dimensión CLASE DE PALABRA (--solo-clase) =============================
+//
+// Independiente de las familias. Solo las tarjetas de tipo 'palabra' reciben
+// clase; las frases quedan con clase_palabra = null. Una sola clase por tarjeta
+// (su uso principal); si hay varias acepciones, la primera.
+
+/**
+ * Lee las tarjetas candidatas a recibir clase de palabra.
+ * Sin --force solo devuelve las que aún no tienen clase (clase_palabra NULL).
+ */
+async function fetchCardsClase() {
+  const all = [];
+  for (let page = 0; page < 50; page += 1) {
+    let query = supabase
+      .from('flashcards')
+      .select('id, arabic, spanish, category, tipo, clase_palabra')
+      .order('id', { ascending: true })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+    if (!FORCE) {
+      query = query.is('clase_palabra', null);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data?.length) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+const SYSTEM_PROMPT_CLASE = `Eres un gramático experto de árabe para estudiantes de nivel A2.
+Tu tarea es asignar a cada tarjeta su TIPO y, si procede, su CLASE DE PALABRA.
+
+TIPO: indica si la tarjeta es una sola palabra o una expresión de varias palabras.
+- "palabra": una única unidad léxica (aunque lleve artículo o pronombre pegado).
+- "frase": expresión, oración o locución de varias palabras.
+
+CLASE DE PALABRA: elige EXCLUSIVAMENTE un valor de esta lista cerrada (copia el NOMBRE literal, con las mismas mayúsculas y acentos):
+${buildClasesPromptBlock()}
+
+Reglas de clasificación (OBLIGATORIAS):
+- Clasifica por el SIGNIFICADO y la función de la tarjeta.
+- Asigna la clase SOLO a las tarjetas de tipo "palabra". En las tarjetas de tipo "frase", devuelve "clase_palabra": null.
+- UNA sola clase por tarjeta: la de su USO PRINCIPAL. Si una palabra tiene varias acepciones de distinta clase, elige la PRIMERA/más habitual.
+- Los numerales usados como nombre (once, diez) son "Sustantivo".
+- Los nombres propios (personas, países, ciudades) son "Sustantivo".
+- Los interrogativos de lugar/tiempo/modo (¿dónde?, ¿cuándo?, ¿cómo?) son "Adverbio"; ¿quién?, ¿qué?, ¿cuál? son "Pronombre".
+- NO inventes clases nuevas ni variantes. Usa SOLO los nombres de la lista.
+- Responde SOLO con JSON válido.`;
+
+/**
+ * Pide a la IA el tipo y la clase de palabra de un lote de tarjetas.
+ * Devuelve un Map<id, { tipo, clase_palabra }> ya saneado.
+ */
+async function classifyBatchClase(batch) {
+  const payload = batch.map((c) => ({
+    id: c.id,
+    arabic: c.arabic || '',
+    spanish: c.spanish || '',
+    category: c.category || '',
+  }));
+
+  const userPrompt = `Clasifica estas tarjetas. Devuelve un objeto JSON con esta forma exacta:
+{
+  "resultados": [
+    { "id": <id numérico de la tarjeta>, "tipo": "palabra|frase", "clase_palabra": "Clase exacta de la lista o null" }
+  ]
+}
+Incluye TODAS las tarjetas recibidas, cada una con su id original.
+Recuerda: "clase_palabra" debe ser null cuando el "tipo" sea "frase".
+
+TARJETAS:
+${JSON.stringify(payload, null, 2)}`;
+
+  const response = await openai.chat.completions.create({
+    model: MODEL,
+    temperature: 0.1,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT_CLASE },
+      { role: 'user', content: userPrompt },
+    ],
+  });
+
+  const content = response.choices?.[0]?.message?.content || '{}';
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`La IA no devolvió JSON válido para el lote: ${error.message}`);
+  }
+
+  const resultados = Array.isArray(parsed.resultados) ? parsed.resultados : [];
+  const byId = new Map();
+  for (const item of resultados) {
+    const id = item?.id;
+    if (id === undefined || id === null) continue;
+    const tipo = item?.tipo === 'frase' ? 'frase' : 'palabra';
+    // Solo las palabras reciben clase; las frases, null.
+    const clase_palabra = tipo === 'palabra' ? sanitizeClase(item.clase_palabra) : null;
+    byId.set(Number(id), { tipo, clase_palabra });
+  }
+  return byId;
+}
+
+/**
+ * Actualiza `clase_palabra` de una tarjeta (y `tipo` si aún no lo tenía).
+ * Nunca toca las familias.
+ */
+async function updateCardClase(card, tipo, clase_palabra) {
+  const patch = { clase_palabra };
+  // Rellena tipo solo si la tarjeta todavía no lo tiene.
+  if (!card.tipo) patch.tipo = tipo;
+
+  const { error } = await supabase.from('flashcards').update(patch).eq('id', card.id);
+  if (error) {
+    // Si la columna tipo no existe aún, reintenta solo con clase_palabra.
+    if (/tipo/.test(error.message) && patch.tipo !== undefined) {
+      const retry = await supabase.from('flashcards').update({ clase_palabra }).eq('id', card.id);
+      if (retry.error) throw retry.error;
+      return;
+    }
+    throw error;
+  }
+}
+
+async function mainClase() {
+  console.log('🔌 Conectando a Supabase y OpenAI...');
+  console.log(`   Modo: CLASE DE PALABRA · ${FORCE ? 'FORCE (todas las tarjetas)' : 'solo tarjetas sin clase'}${DRY_RUN ? ' · DRY-RUN (sin escribir)' : ''}`);
+
+  const cards = await fetchCardsClase();
+  console.log(`📥 ${cards.length} tarjeta(s) a clasificar por clase.`);
+  if (cards.length === 0) {
+    console.log('✅ No hay nada que hacer.');
+    return;
+  }
+
+  const batches = chunk(cards, BATCH_SIZE);
+  let updated = 0;
+  let failed = 0;
+
+  for (let i = 0; i < batches.length; i += 1) {
+    const batch = batches[i];
+    process.stdout.write(`🧠 Lote ${i + 1}/${batches.length} (${batch.length} tarjetas)... `);
+
+    let classification;
+    try {
+      classification = await classifyBatchClase(batch);
+    } catch (error) {
+      console.log(`⚠️  error de IA: ${error.message}`);
+      failed += batch.length;
+      continue;
+    }
+
+    for (const card of batch) {
+      const result = classification.get(Number(card.id)) || { tipo: 'palabra', clase_palabra: null };
+      const { tipo, clase_palabra } = result;
+
+      if (DRY_RUN) {
+        console.log(`\n   [dry-run] #${card.id} "${card.spanish || card.arabic}" -> tipo=${tipo}, clase=${clase_palabra ?? 'null'}`);
+        updated += 1;
+        continue;
+      }
+      try {
+        await updateCardClase(card, tipo, clase_palabra);
+        updated += 1;
+      } catch (error) {
+        console.log(`\n   ❌ No se pudo actualizar #${card.id}: ${error.message}`);
+        failed += 1;
+      }
+    }
+
+    if (!DRY_RUN) process.stdout.write('ok\n');
+    if (i < batches.length - 1) await sleep(400);
+  }
+
+  console.log('\n🎉 Clasificación por clase terminada.');
+  console.log(`   ${DRY_RUN ? 'A actualizar' : 'Actualizadas'}: ${updated}`);
+  if (failed > 0) console.log(`   Con errores:  ${failed}`);
+  if (DRY_RUN) console.log('\n   (DRY-RUN: no se escribió nada en Supabase)');
+}
+
 // --- Programa principal -----------------------------------------------------
 
 async function main() {
+  if (SOLO_CLASE) {
+    await mainClase();
+    return;
+  }
   console.log('🔌 Conectando a Supabase y OpenAI...');
   console.log(`   Modo: ${FORCE ? 'FORCE (todas las tarjetas)' : 'solo tarjetas sin familias'}${DRY_RUN ? ' · DRY-RUN (sin escribir)' : ''}`);
 

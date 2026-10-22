@@ -188,6 +188,55 @@ Restricciones transversales (reflejadas en las tareas): **no** ejecutar SQL ni d
     - **Property 5: Tipo válido**
     - **Validates: Requirements 9.2, 10.1, 10.2, 10.3**
 
+- [x] 14. Dimensión `clase de palabra` — backend y datos (independiente de familias)
+  - [x] 14.1 Crear `supabase/functions/_shared/clases.js` como fuente canónica
+    - Lista cerrada y ordenada de 9 clases con descripción y ejemplos: Sustantivo, Adjetivo, Artículo, Pronombre, Verbo, Adverbio, Preposición, Conjunción, Interjección
+    - Exportar `CLASES_PALABRA_META`, `CLASES_PALABRA`, `CLASES_PALABRA_SET`, `sanitizeClase()` (nombre canónico o `null`), `buildClasesPromptBlock()`
+    - ESM puro, sin APIs de Node ni de Deno; independiente de `familias.js`
+    - _Requirements: 6.1, 6.2, 6.5_
+
+  - [x] 14.2 Crear `src/constants/clases.js` como reexportación
+    - `export * from "../../supabase/functions/_shared/clases.js"`, sin segunda definición
+    - _Requirements: 6.3, 6.5_
+
+  - [x] 14.3 Crear `supabase/add-clase-palabra.sql` idempotente (NO ejecutar)
+    - `add column if not exists clase_palabra text`; constraint `flashcards_clase_palabra_check` con los 9 valores creada solo si no existe; `create index if not exists flashcards_clase_palabra_idx`
+    - Permitir NULL (frases y sin clasificar); comentario de idempotencia y de que se ejecuta en SQL Editor (no aquí)
+    - _Requirements: 8.1, 8.2, 8.3_
+
+  - [x] 14.4 Añadir `clase_palabra` al contrato de `importar`
+    - Prompt: inyectar `buildClasesPromptBlock()`, pedir `clase_palabra` por elemento y la regla `null` en frases
+    - `normalizeItem`: `clase_palabra = tipo==='palabra' ? sanitizeClase(raw.clase_palabra) : null`; incluirlo en el item devuelto
+    - _Requirements: 13.1, 13.2_
+
+  - [x] 14.5 Añadir flag `--solo-clase` a `scripts/catalogar-familias.js`
+    - Candidatas: tarjetas con `clase_palabra` NULL (sin `--force`); combinable con `--dry-run`
+    - Prompt con `buildClasesPromptBlock()` pidiendo `{ tipo, clase_palabra }` por tarjeta; clase solo si `tipo==='palabra'`
+    - `update { clase_palabra }` y, solo si falta, `{ tipo }`; NUNCA tocar familias/confianza; reintento si la columna `tipo` no existe
+    - _Requirements: 9.1, 9.2_
+
+  - [ ]* 14.6 Verificar `node --check` y Property 5b
+    - `node --check` de `scripts/catalogar-familias.js`, `src/constants/clases.js` y `supabase/functions/_shared/clases.js`
+    - **Property 5b: Clase de palabra válida e independiente** (9 valores o null; frases → null; no modifica familias)
+    - **Validates: Requirements 8.1, 8.2, 8.3, 9.2, 13.1, 13.2**
+
+- [ ] 15. Dimensión `clase de palabra` — UI (Tanda 2)
+  - [ ] 15.1 Filtro "Clase de palabra" en la vista principal
+    - Selector con `Todas` + las 9 clases; combinable con el filtro de familia y el de tipo; filtra por `clase_palabra`
+    - _Requirements: 11.1, 11.2, 11.3_
+
+  - [ ] 15.2 Mostrar la clase en la tarjeta
+    - Mostrar `clase_palabra` (cuando no sea null) en la tarjeta, de forma discreta y sin romper el diseño actual
+    - _Requirements: 10.1, 10.2_
+
+  - [ ] 15.3 Editar la clase en la pantalla de revisión del importador
+    - En la tabla de revisión de `SmartImportModal`, permitir elegir/cambiar `clase_palabra` (lista de 9 + "sin clase"); deshabilitado/forzado a null en filas de tipo `frase`
+    - _Requirements: 15.1, 15.2_
+
+  - [ ] 15.4 Editar la clase en el formulario de editar tarjeta
+    - Añadir el selector de `clase_palabra` al formulario de edición de tarjeta; guardar bajo RLS sin tocar familias
+    - _Requirements: 16.1, 17.1_
+
 - [ ] 11. Verificación de build, lint, bundle y no regresión
   - [ ] 11.1 Ejecutar `npm run build` y comprobar el bundle
     - Build sin errores; el bundle inicial no crece y baja al quitar `openai`; `pdfjs` sigue en chunk perezoso fuera del inicial
@@ -223,7 +272,8 @@ Restricciones transversales (reflejadas en las tareas): **no** ejecutar SQL ni d
 
 - Las subtareas marcadas con `*` son opcionales (pruebas: unitarias, de propiedad y de integración) y pueden omitirse para un MVP más rápido. Las tareas de implementación centrales nunca son opcionales.
 - Cada tarea referencia cláusulas de requisito concretas para trazabilidad y, cuando aplica, la propiedad de corrección que valida.
-- El módulo compartido (`_shared/`) es la fuente única: toda otra aparición de las familias es una reexportación.
+- El módulo compartido (`_shared/`) es la fuente única: toda otra aparición de las familias (y de las clases de palabra) es una reexportación.
+- `clase de palabra` es una dimensión INDEPENDIENTE de las familias (fuente única `_shared/clases.js`, 9 valores). El bloque backend/datos (tarea 14) ya está implementado; la UI (tarea 15) es Tanda 2 y no se inicia hasta confirmar que las funciones están desplegadas y probadas.
 - No se ejecuta SQL ni se despliegan funciones en este trabajo: la migración `add-tipo.sql` y el despliegue quedan como pasos manuales del entregable (tarea 12).
 - Las Edge Functions (TypeScript/Deno) no cuentan para el límite de 22 problemas del ESLint del front.
 - Los checkpoints aseguran validación incremental; el proyecto no tiene framework de test hoy, así que las verificaciones opcionales usan `node --check`/scripts Node salvo que se añada Vitest.

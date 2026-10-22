@@ -207,6 +207,31 @@ Tabla existente `public.flashcards` (no se elimina nada):
 | `arabe_normalizado` | text | existe | clave de deduplicación (normalizarArabe) |
 | `familias_confianza` | text | existe | `'alta' \| 'media' \| 'baja'` (CHECK ya aplicado) |
 | **`tipo`** | **text** | **NUEVA** | **`'palabra' \| 'frase'` con CHECK; permite NULL hasta rellenar** |
+| **`clase_palabra`** | **text** | **NUEVA** | **Clase gramatical (9 valores cerrados) con CHECK; NULL en frases y en tarjetas sin clasificar. Dimensión INDEPENDIENTE de `familias`** |
+
+### Dimensión `clase_palabra` (clase de palabra) — independiente de las familias
+
+`clase_palabra` es una **segunda dimensión de clasificación**, ortogonal a `familias` (temáticas) y ligada a `tipo`. Su **fuente canónica única** vive en `supabase/functions/_shared/clases.js` (ESM puro, mismo patrón que `familias.js`): `CLASES_PALABRA_META`, `CLASES_PALABRA`, `CLASES_PALABRA_SET`, `sanitizeClase()`, `buildClasesPromptBlock()`. `src/constants/clases.js` solo **reexporta** desde ahí; las Edge Functions importan `../_shared/clases.js`.
+
+Lista cerrada y ordenada de **9 clases** (copia literal del nombre, con mayúsculas y acentos):
+
+| Clase | Qué nombra | Ejemplos |
+|---|---|---|
+| `Sustantivo` | personas, cosas, lugares, conceptos (incl. nombres propios y numerales usados como nombre) | casa, padre, Marruecos, once |
+| `Adjetivo` | cualidad o estado de un sustantivo | alto, rojo, contento |
+| `Artículo` | determinante del nombre | ال |
+| `Pronombre` | sustituye/señala al nombre: personales, demostrativos, posesivos, interrogativos | él, este, mi, ـكَ (tu), ¿quién? |
+| `Verbo` | acción o estado; formas conjugadas | tengo, escribe, estudia |
+| `Adverbio` | modifica a verbo/adjetivo/oración: lugar, tiempo, modo | aquí, ahora, ¿dónde?, debajo, delante |
+| `Preposición` | relaciona palabras introduciendo un complemento | en, sobre, con, de |
+| `Conjunción` | une palabras u oraciones | y, pero, ni… ni |
+| `Interjección` | emoción o fórmula exclamativa | ¡hola!, ¡ah! |
+
+**Reglas de asignación (OBLIGATORIAS):**
+- Solo las tarjetas de `tipo = 'palabra'` reciben clase; las de `tipo = 'frase'` quedan con `clase_palabra = NULL`.
+- **Una sola clase por tarjeta**, la de su **uso principal**. Si una palabra tiene varias acepciones de distinta clase, se toma la **primera**/más habitual.
+- `sanitizeClase(value)` devuelve el nombre canónico si es válido, o `NULL` en caso contrario (NULL es un valor válido: frases y tarjetas sin clasificar).
+- No sustituye ni modifica a `familias`: una tarjeta puede tener familias y clase a la vez, o familias sin clase (frase).
 
 ### Migración SQL (bloque 2) — idempotente, NO se ejecuta aquí
 
@@ -235,6 +260,38 @@ end $$;
 
 create index if not exists flashcards_tipo_idx
   on public.flashcards (tipo);
+```
+
+### Migración SQL (dimensión clase) — idempotente, NO se ejecuta aquí
+
+Archivo nuevo: `supabase/add-clase-palabra.sql`, mismo estilo idempotente que `add-tipo.sql`:
+
+```sql
+-- Migración: añade la columna `clase_palabra` a public.flashcards.
+-- Dimensión gramatical INDEPENDIENTE de las familias (9 valores cerrados).
+-- Solo las tarjetas de tipo 'palabra' reciben clase; 'frase' -> NULL.
+-- Permite NULL para tarjetas aún sin clasificar (las rellena catalogar --solo-clase).
+-- Ejecutar en Supabase -> SQL Editor. Idempotente: se puede lanzar varias veces.
+
+alter table public.flashcards
+  add column if not exists clase_palabra text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'flashcards_clase_palabra_check'
+  ) then
+    alter table public.flashcards
+      add constraint flashcards_clase_palabra_check
+      check (clase_palabra in (
+        'Sustantivo', 'Adjetivo', 'Artículo', 'Pronombre', 'Verbo',
+        'Adverbio', 'Preposición', 'Conjunción', 'Interjección'
+      ));
+  end if;
+end $$;
+
+create index if not exists flashcards_clase_palabra_idx
+  on public.flashcards (clase_palabra);
 ```
 
 ---
@@ -292,6 +349,21 @@ Responsabilidades: construir el body, inyectar `OPENAI_API_KEY` de `Deno.env`, p
 ### Componente: `_shared/familias.js` (fuente canónica)
 
 Es la **única** definición editable de las 26 familias (datos + reglas + funciones puras) en ESM puro. API idéntica a la actual: `FAMILIAS_A2_META`, `FAMILIAS_A2`, `FAMILIAS_A2_SET`, `CONFIANZAS`, `FAMILIA_FALLBACK`, `sanitizeFamilias`, `ensureFamilias`, `sanitizeConfianza`, `getCardFamilias`, `buildFamiliasPromptBlock`. `src/constants/familias.js`, `scripts/*` y las Edge Functions la **reexportan**; no la redefinen.
+
+### Componente: `_shared/clases.js` (fuente canónica)
+
+**Única** definición editable de las 9 clases de palabra (datos + funciones puras) en ESM puro, independiente de las familias:
+
+```javascript
+// supabase/functions/_shared/clases.js
+export const CLASES_PALABRA_META;   // 9 objetos { nombre, descripcion, ejemplos }
+export const CLASES_PALABRA;        // string[] ordenado con los 9 nombres
+export const CLASES_PALABRA_SET;    // Set para validación O(1)
+export function sanitizeClase(value); // nombre canónico | null
+export function buildClasesPromptBlock(); // bloque de 9 líneas para el prompt
+```
+
+`src/constants/clases.js` **reexporta** desde ahí (`export * from "../../supabase/functions/_shared/clases.js"`); las Edge Functions importan `../_shared/clases.js`; `scripts/catalogar-familias.js` la consume vía `../src/constants/clases.js`. No hay segunda definición.
 
 ### Componente frontend: `SmartImportModal` (reescrito, `src/App.jsx`)
 
@@ -359,6 +431,7 @@ Convenciones comunes:
       "espanol": "camisa",
       "transliteracion": "qamīṣ",
       "tipo": "palabra",
+      "clase_palabra": "Sustantivo",
       "familias": ["Compras y ropa"],
       "confianza": "alta",
       "arabe_normalizado": "قميص"
@@ -368,6 +441,7 @@ Convenciones comunes:
       "espanol": "voy al mercado esta tarde",
       "transliteracion": "aḏhabu ilā as-sūq hāḏā al-masāʼ",
       "tipo": "frase",
+      "clase_palabra": null,
       "familias": ["Compras y ropa", "Tiempo, fechas y clima"],
       "confianza": "media",
       "arabe_normalizado": "اذهب الى السوق هذا المساء"
@@ -380,6 +454,7 @@ Garantías del servidor por item:
 - `confianza` saneada a `'alta'|'media'|'baja'` (`sanitizeConfianza`).
 - `arabe_normalizado` calculado con `normalizarArabe` (fuente compartida) para que el cliente deduplique con el mismo criterio.
 - `tipo` ∈ `{'palabra','frase'}` inferido por la IA (heurística de respaldo en servidor si falta).
+- `clase_palabra` ∈ `{una de las 9 clases}` solo cuando `tipo==='palabra'`; en `tipo==='frase'` es `null`. Saneado con `sanitizeClase` (valor inválido ⟹ `null`).
 
 **No escribe en la BD.** `importar` **solo devuelve propuestas**: no hace ningún `insert` ni `update` en `flashcards`. El guardado (insert de nuevas / update de fusiones) lo realiza la app **después** de la pantalla de revisión, con el JWT de admin y bajo RLS.
 
@@ -470,11 +545,14 @@ function normalizeItem(raw): ImportItem {
   const tipo = raw.tipo === "frase" || raw.tipo === "palabra"
     ? raw.tipo
     : (String(raw.espanol ?? "").trim().split(/\s+/).length > 2 ? "frase" : "palabra");
+  // Solo las palabras reciben clase; las frases, null.
+  const clase_palabra = tipo === "palabra" ? sanitizeClase(raw.clase_palabra) : null;
   return {
     arabe: String(raw.arabe ?? "").trim(),
     espanol: String(raw.espanol ?? "").trim(),
     transliteracion: String(raw.transliteracion ?? "").trim(),
     tipo,
+    clase_palabra,
     familias,
     confianza,
     arabe_normalizado: normalizarArabe(raw.arabe ?? ""),
@@ -539,6 +617,21 @@ function inferirTipo(card) {
 // Con --solo-tipo: update { tipo } donde tipo IS NULL, SIN tocar familias/confianza.
 ```
 
+### `catalogar-familias.js --solo-clase` (dimensión clase)
+
+```javascript
+// Nuevo flag: --solo-clase (combinable con --force y --dry-run).
+const SOLO_CLASE = args.includes('--solo-clase');
+
+// Candidatas: tarjetas con clase_palabra IS NULL (sin --force). NO toca familias.
+// Llama a OpenAI (mismo MODEL/BATCH_SIZE) con un prompt que inyecta
+// buildClasesPromptBlock() y pide por tarjeta { tipo, clase_palabra }.
+// Reglas: clase solo si tipo==='palabra'; si es 'frase' -> clase_palabra = null.
+// Update: { clase_palabra } y, solo si la tarjeta aún no tiene tipo, { tipo }.
+//         NUNCA escribe en familias/familias_confianza.
+//         Si la columna tipo no existe aún, reintenta solo con clase_palabra.
+```
+
 ### Sustitución de `getCardType()` (bloque 2)
 
 ```javascript
@@ -573,6 +666,8 @@ const filtered = cards.filter(c =>
 | Archivo | Acción | Detalle |
 |---|---|---|
 | `supabase/functions/_shared/familias.js` | **crear** | **Fuente canónica única**: datos de 26 familias + reglas + funciones puras (movidas desde `src/constants/familias.js`). ESM puro, sin Node/Deno. |
+| `supabase/functions/_shared/clases.js` | **crear** | **Fuente canónica única** de las 9 clases de palabra + `sanitizeClase`/`buildClasesPromptBlock`. ESM puro, independiente de familias. |
+| `src/constants/clases.js` | **crear** | Reexporta `export * from "../../supabase/functions/_shared/clases.js"`. |
 | `supabase/functions/_shared/arabe.js` | **crear** | `normalizarArabe` (movido desde `scripts/_arabe.js`). ESM puro. |
 | `supabase/functions/_shared/fewshot.js` | **crear** | `buildFewShotBlock(ejemplos)` puro (parte pura extraída de `scripts/_fewshot.js`; sin `fs`). |
 | `supabase/functions/_shared/ejemplos-familias.json` | **mover** | Desde `scripts/ejemplos-familias.json` a su nueva ubicación en `_shared/`. |
@@ -585,13 +680,15 @@ const filtered = cards.filter(c =>
 | `supabase/functions/auditar/index.ts` | **crear** | Contrato `auditar`. |
 | `supabase/functions/sugerir-familias/index.ts` | **crear** | Contrato `sugerir-familias` (service role interno). |
 | `supabase/add-tipo.sql` | **crear** | Migración idempotente columna `tipo` (NO ejecutar). |
+| `supabase/add-clase-palabra.sql` | **crear** | Migración idempotente columna `clase_palabra` (9 valores CHECK) (NO ejecutar). |
 | `src/App.jsx` — `loadOpenAI` | **eliminar** | Quitar helper y `_openaiModulePromise`. |
 | `src/App.jsx` — `SmartImportModal` | **reescribir** | Sin API key; llama `importar`; pantalla de revisión; campo lección; dedup. |
 | `src/App.jsx` — `AIAuditor` | **modificar** | Sin API key; llama `auditar`. |
 | `src/App.jsx` — `getCardType` | **modificar** | Usa `tipo`. |
 | `src/App.jsx` — vista principal | **modificar** | Filtro por `tipo`. |
 | `src/App.jsx` — `AdvancedMaintenanceModal` | **modificar** | Botón "Sugerir familias nuevas". |
-| `scripts/catalogar-familias.js` | **modificar** | Rellena `tipo`; flag `--solo-tipo`. |
+| `scripts/catalogar-familias.js` | **modificar** | Rellena `tipo`; flag `--solo-tipo`. Flag `--solo-clase`: rellena `clase_palabra` (y `tipo` si falta) vía IA, sin tocar familias. |
+| `supabase/functions/importar/index.ts` | **modificar** | El prompt pide `clase_palabra`; `normalizeItem` lo sanea (`null` en frases). |
 | `package.json` | **modificar** | Eliminar dependencia `openai`. Mantener `pdfjs-dist`. |
 | `docs/INFORME-PROYECTO.md` | **actualizar** (al final de la implementación) | Documentar IA en servidor, columna `tipo`, nuevo flujo. |
 
@@ -621,6 +718,10 @@ Expresadas como invariantes verificables (∀ = para todo):
 ### Property 5: Tipo válido
 
 ∀ item y ∀ fila guardada: `tipo ∈ {'palabra','frase'}`; la BD rechaza cualquier otro valor (CHECK).
+
+### Property 5b: Clase de palabra válida e independiente
+
+∀ item y ∀ fila con clase: `clase_palabra ∈ {las 9 clases}` ∨ `clase_palabra = null`; la BD rechaza cualquier otro valor (CHECK). ∀ tarjeta con `tipo='frase'` ⟹ `clase_palabra = null`. Asignar o cambiar `clase_palabra` **nunca** modifica `familias` ni `familias_confianza` (dimensiones ortogonales).
 
 ### Property 6: Dedup coherente
 
@@ -748,12 +849,14 @@ Juegos, auth admin y RLS permanecen sin cambios funcionales.
    supabase link --project-ref <project-ref>
    ```
 
-5. **Aplicar la migración SQL** (manual, Supabase → SQL Editor): pegar y ejecutar `supabase/add-tipo.sql`. Idempotente.
+5. **Aplicar las migraciones SQL** (manual, Supabase → SQL Editor): pegar y ejecutar `supabase/add-tipo.sql` y `supabase/add-clase-palabra.sql`. Ambas idempotentes.
 
-6. **Rellenar `tipo` en tarjetas existentes:**
+6. **Rellenar `tipo` y `clase_palabra` en tarjetas existentes:**
    ```bash
    npm run catalogar -- --solo-tipo
+   npm run catalogar -- --solo-clase
    ```
+   (`--solo-clase` rellena la clase de palabra —y el `tipo` si aún falta— vía IA, sin tocar familias.)
 
 7. **Desplegar las funciones:**
    ```bash

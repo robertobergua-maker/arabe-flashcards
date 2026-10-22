@@ -19,6 +19,7 @@ import {
 } from '../_shared/familias.js';
 import { buildFewShotBlock } from '../_shared/fewshot.js';
 import { normalizarArabe } from '../_shared/arabe.js';
+import { buildClasesPromptBlock, sanitizeClase } from '../_shared/clases.js';
 import ejemplos from '../_shared/ejemplos-familias.json' with { type: 'json' };
 
 // Límites de tamaño de entrada.
@@ -33,11 +34,15 @@ Separa PALABRAS de FRASES. Por cada elemento devuelve:
 - espanol: el significado claro y conciso en español.
 - transliteracion: transliteración con signos diacríticos (ā, ī, ū, ḏ, ṯ, ḥ, ṣ, ḍ, ṭ, ẓ, ʿ, ʾ…).
 - tipo: "palabra" o "frase".
+- clase_palabra: la categoría gramatical (ver lista) SOLO si tipo es "palabra"; si tipo es "frase", pon null.
 - familias: una o más familias de la lista cerrada (NUNCA vacío; usa la más cercana si dudas).
 - confianza: "alta" | "media" | "baja".
 
 Elige las familias EXCLUSIVAMENTE de esta lista cerrada. Hay dos grupos: VOCABULARIO y GRAMÁTICA:
 ${buildFamiliasPromptBlock()}
+
+Elige la clase_palabra EXCLUSIVAMENTE de esta lista cerrada de 9 clases:
+${buildClasesPromptBlock()}
 
 Reglas:
 - Clasifica por el SIGNIFICADO, no por nombres propios ni contexto del diálogo.
@@ -45,11 +50,12 @@ Reglas:
 - Grupo GRAMÁTICA solo si el elemento trata de ese punto gramatical.
 - TODO elemento DEBE recibir al menos una familia: nunca vacío; si dudas, la más cercana con confianza "baja".
 - Devuelve el NOMBRE de la familia tal cual aparece en la lista.
+- clase_palabra: UNA SOLA clase, la del uso principal. Si la entrada tiene varias acepciones de distinta clase, usa la PRIMERA. Si tipo es "frase", clase_palabra DEBE ser null.
 ${buildFewShotBlock(ejemplos as Array<{ espanol: string; familias: string[] }>)}
 Devuelve SOLO un objeto JSON con esta forma EXACTA (la clave de nivel superior debe llamarse "items"):
 {
   "items": [
-    { "arabe": "...", "espanol": "...", "transliteracion": "...", "tipo": "palabra|frase", "familias": ["..."], "confianza": "alta|media|baja" }
+    { "arabe": "...", "espanol": "...", "transliteracion": "...", "tipo": "palabra|frase", "clase_palabra": "Sustantivo|...|null", "familias": ["..."], "confianza": "alta|media|baja" }
   ]
 }
 No uses ninguna otra clave de nivel superior (ni "vocabulario", ni "palabras", ni "frases"): todo va dentro de "items".`;
@@ -80,11 +86,15 @@ function normalizeItem(raw: Record<string, unknown>) {
       : [];
   const { familias, forzada } = ensureFamilias(familiasInput);
   const confianza = forzada ? 'baja' : sanitizeConfianza(raw.confianza as string);
+  const tipo = inferirTipo(raw.tipo, espanol);
+  // Solo las palabras reciben clase; las frases quedan en null.
+  const clase_palabra = tipo === 'palabra' ? sanitizeClase(raw.clase_palabra) : null;
   return {
     arabe,
     espanol,
     transliteracion,
-    tipo: inferirTipo(raw.tipo, espanol),
+    tipo,
+    clase_palabra,
     familias,
     confianza,
     arabe_normalizado: normalizarArabe(arabe),
