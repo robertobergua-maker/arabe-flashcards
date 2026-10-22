@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "catalogar": "node scripts/catalogar-familias.js",
-    "ingestar": "node scripts/ingestar-aportes.js"
+    "ingestar": "node scripts/ingestar-aportes.js",
+    "revisar": "node scripts/revisar-familias.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.89.0",

@@ -17,6 +17,7 @@ import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { sanitizeFamilias, buildFamiliasPromptBlock } from '../src/constants/familias.js';
+import { buildFewShotBlock } from './_fewshot.js';
 
 // --- Configuración ---------------------------------------------------------
 
@@ -113,6 +114,7 @@ Reglas de clasificación (OBLIGATORIAS):
 - Si NINGUNA familia de la lista encaja, devuelve un array de familias VACÍO ([]). NO inventes ni fuerces una familia.
 - NO inventes familias nuevas ni variantes. NO uses etiquetas como "Pista", "Vocabulario lección X", nombres de lección ni categorías del material original.
 - Devuelve el NOMBRE de la familia tal cual aparece en la lista.
+${buildFewShotBlock()}
 - Responde SOLO con JSON válido.`;
 
 /**

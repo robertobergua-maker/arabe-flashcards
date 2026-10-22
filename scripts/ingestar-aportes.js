@@ -25,6 +25,7 @@ import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
 import { sanitizeFamilias, buildFamiliasPromptBlock } from '../src/constants/familias.js';
+import { buildFewShotBlock } from './_fewshot.js';
 
 // --- Configuración ---------------------------------------------------------
 
@@ -156,6 +157,7 @@ Reglas de clasificación (OBLIGATORIAS):
 - Devuelve el NOMBRE de la familia tal cual aparece en la lista.
 - Conserva el árabe en escritura árabe (con vocalización/harakat si aparece en el original).
 - El significado en español debe ser claro y conciso.
+${buildFewShotBlock()}
 - Responde SOLO con JSON válido.`;
 
 function buildExtractionUserText(sourceLabel) {
