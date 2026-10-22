@@ -1,1 +1,193 @@
-[]
+[
+  {
+    "espanol": "biblioteca",
+    "familias": [
+      "Clase y estudios"
+    ]
+  },
+  {
+    "espanol": "cheque",
+    "familias": [
+      "Compras y ropa"
+    ]
+  },
+  {
+    "espanol": "chico",
+    "familias": [
+      "Familia"
+    ]
+  },
+  {
+    "espanol": "jarra",
+    "familias": [
+      "Comida y bebida"
+    ]
+  },
+  {
+    "espanol": "hombre",
+    "familias": [
+      "Datos personales"
+    ]
+  },
+  {
+    "espanol": "Joven",
+    "familias": [
+      "Descripción física"
+    ]
+  },
+  {
+    "espanol": "Ventana",
+    "familias": [
+      "Casa y habitaciones"
+    ]
+  },
+  {
+    "espanol": "Sol",
+    "familias": [
+      "Tiempo, fechas y clima"
+    ]
+  },
+  {
+    "espanol": "Película",
+    "familias": [
+      "Rutina y tiempo libre"
+    ]
+  },
+  {
+    "espanol": "como (comparación)",
+    "familias": [
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "La pelota del niño",
+    "familias": [
+      "Pronombres, posesivos y demostrativos"
+    ]
+  },
+  {
+    "espanol": "Vivo en Madrid",
+    "familias": [
+      "Ciudad y lugares"
+    ]
+  },
+  {
+    "espanol": "Nosotros vamos",
+    "familias": [
+      "Verbos y conjugación"
+    ]
+  },
+  {
+    "espanol": "Bien, gracias a Dios (respuesta larga 2)",
+    "familias": [
+      "Saludos y cortesía",
+      "Emociones y estados"
+    ]
+  },
+  {
+    "espanol": "Su libro grande",
+    "familias": [
+      "Muebles y objetos",
+      "Pronombres, posesivos y demostrativos"
+    ]
+  },
+  {
+    "espanol": "El sol es amarillo",
+    "familias": [
+      "Colores"
+    ]
+  },
+  {
+    "espanol": "No, no tengo coche",
+    "familias": [
+      "Transporte y viajes"
+    ]
+  },
+  {
+    "espanol": "¿Nadia, dónde está el cuadro?",
+    "familias": [
+      "Ubicación y preposiciones",
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "El libro del profesor de árabe",
+    "familias": [
+      "Trabajo y profesiones",
+      "Clase y estudios"
+    ]
+  },
+  {
+    "espanol": "No va mal",
+    "familias": [
+      "Emociones y estados"
+    ]
+  },
+  {
+    "espanol": "¿Y en qué número?",
+    "familias": [
+      "Números",
+      "Preguntas y conectores"
+    ]
+  },
+  {
+    "espanol": "El barrio es bonito. Hay una panadería, un restaurante y un hospital cerca.",
+    "familias": [
+      "Salud",
+      "Ciudad y lugares",
+      "Comida y bebida"
+    ]
+  },
+  {
+    "espanol": "Libro",
+    "familias": [
+      "Clase y estudios"
+    ]
+  },
+  {
+    "espanol": "ese coche bonito es rápido",
+    "familias": [
+      "Compras y ropa"
+    ]
+  },
+  {
+    "espanol": "ese es un niño pequeño",
+    "familias": [
+      "Familia",
+      "Descripción física",
+      "Pronombres, posesivos y demostrativos"
+    ]
+  },
+  {
+    "espanol": "el restaurante sucio",
+    "familias": [
+      "Comida y bebida"
+    ]
+  },
+  {
+    "espanol": "mujer",
+    "familias": [
+      "Datos personales"
+    ]
+  },
+  {
+    "espanol": "Nabil es un hombre anciano, tiene el pelo gris, las orejas grandes, la nariz larga y los ojos marrones",
+    "familias": [
+      "Descripción física",
+      "Colores"
+    ]
+  },
+  {
+    "espanol": "Está sobre la mesita",
+    "familias": [
+      "Casa y habitaciones",
+      "Ubicación y preposiciones"
+    ]
+  },
+  {
+    "espanol": "Vamos",
+    "familias": [
+      "Rutina y tiempo libre"
+    ]
+  }
+]
