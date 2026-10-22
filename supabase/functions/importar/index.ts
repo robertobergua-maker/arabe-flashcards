@@ -46,36 +46,69 @@ Reglas:
 - TODO elemento DEBE recibir al menos una familia: nunca vacío; si dudas, la más cercana con confianza "baja".
 - Devuelve el NOMBRE de la familia tal cual aparece en la lista.
 ${buildFewShotBlock(ejemplos as Array<{ espanol: string; familias: string[] }>)}
-Responde SOLO con JSON válido.`;
-
-interface RawItem {
-  arabe?: string;
-  espanol?: string;
-  transliteracion?: string;
-  tipo?: string;
-  familias?: string[];
-  confianza?: string;
+Devuelve SOLO un objeto JSON con esta forma EXACTA (la clave de nivel superior debe llamarse "items"):
+{
+  "items": [
+    { "arabe": "...", "espanol": "...", "transliteracion": "...", "tipo": "palabra|frase", "familias": ["..."], "confianza": "alta|media|baja" }
+  ]
 }
+No uses ninguna otra clave de nivel superior (ni "vocabulario", ni "palabras", ni "frases"): todo va dentro de "items".`;
 
-function inferirTipo(raw: RawItem): 'palabra' | 'frase' {
-  if (raw.tipo === 'frase' || raw.tipo === 'palabra') return raw.tipo;
-  const palabras = String(raw.espanol ?? '').trim().split(/\s+/).filter(Boolean);
+function inferirTipo(tipo: unknown, espanol: string): 'palabra' | 'frase' {
+  if (tipo === 'frase' || tipo === 'palabra') return tipo;
+  const palabras = espanol.trim().split(/\s+/).filter(Boolean);
   return palabras.length > 2 ? 'frase' : 'palabra';
 }
 
-function normalizeItem(raw: RawItem) {
-  const { familias, forzada } = ensureFamilias(raw.familias);
-  const confianza = forzada ? 'baja' : sanitizeConfianza(raw.confianza);
-  const arabe = String(raw.arabe ?? '').trim();
+// Tolerante a nombres de campo alternativos que a veces usa la IA.
+function pickField(raw: Record<string, unknown>, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = raw[k];
+    if (typeof v === 'string' && v.trim() !== '') return v.trim();
+  }
+  return '';
+}
+
+function normalizeItem(raw: Record<string, unknown>) {
+  const arabe = pickField(raw, 'arabe', 'arabic', 'ar');
+  const espanol = pickField(raw, 'espanol', 'español', 'spanish', 'es');
+  const transliteracion = pickField(raw, 'transliteracion', 'transliteración', 'translit', 'fonetica', 'phonetic');
+  const familiasInput = Array.isArray(raw.familias)
+    ? raw.familias
+    : typeof raw.familias === 'string'
+      ? [raw.familias]
+      : [];
+  const { familias, forzada } = ensureFamilias(familiasInput);
+  const confianza = forzada ? 'baja' : sanitizeConfianza(raw.confianza as string);
   return {
     arabe,
-    espanol: String(raw.espanol ?? '').trim(),
-    transliteracion: String(raw.transliteracion ?? '').trim(),
-    tipo: inferirTipo(raw),
+    espanol,
+    transliteracion,
+    tipo: inferirTipo(raw.tipo, espanol),
     familias,
     confianza,
     arabe_normalizado: normalizarArabe(arabe),
   };
+}
+
+// Busca recursivamente el primer array de objetos "item-like" en la respuesta,
+// sea cual sea la clave que use la IA (items, entradas, vocabulario, palabras+frases…).
+function extractItemArray(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) {
+    return value.filter((v) => v && typeof v === 'object') as Record<string, unknown>[];
+  }
+  if (!value || typeof value !== 'object') return [];
+  const obj = value as Record<string, unknown>;
+  // Preferir claves conocidas primero.
+  for (const key of ['items', 'entradas', 'vocabulario', 'resultados', 'tarjetas']) {
+    if (Array.isArray(obj[key])) return extractItemArray(obj[key]);
+  }
+  // Si separó palabras y frases en claves distintas, combinarlas.
+  const combinado: Record<string, unknown>[] = [];
+  for (const v of Object.values(obj)) {
+    if (Array.isArray(v)) combinado.push(...extractItemArray(v));
+  }
+  return combinado;
 }
 
 async function handle(req: Request): Promise<Response> {
@@ -113,22 +146,40 @@ async function handle(req: Request): Promise<Response> {
       ]
     : `Extrae el vocabulario árabe-español del siguiente material.\n\nMATERIAL:\n${contenido}`;
 
-  const result = await chatJson<{ items?: RawItem[]; entradas?: RawItem[] }>({
+  console.log(`[importar] modo=${modo} longitud=${contenido.length}`);
+
+  console.log('[importar] llamando a OpenAI…');
+  const result = await chatJson<Record<string, unknown>>({
     model: 'gpt-4o', // gpt-4o soporta texto y visión
     system: SYSTEM_PROMPT,
     user: userContent,
     temperature: 0.1,
   });
+  console.log('[importar] OpenAI respondió. claves de nivel superior:', Object.keys(result ?? {}).join(', ') || '(ninguna)');
 
-  const rawItems = Array.isArray(result.items)
-    ? result.items
-    : Array.isArray(result.entradas)
-      ? result.entradas
-      : [];
+  const rawItems = extractItemArray(result);
+  console.log(`[importar] elementos crudos de la IA: ${rawItems.length}`);
 
+  // La IA respondió JSON legible pero sin ningún array de elementos: es una
+  // respuesta inesperada, no una lista vacía legítima -> 502 (nunca [] silencioso).
+  if (rawItems.length === 0) {
+    throw new HttpError(
+      502,
+      `OpenAI no devolvió ningún elemento utilizable. Claves recibidas: ${Object.keys(result ?? {}).join(', ') || '(ninguna)'}`,
+    );
+  }
+
+  let descartados = 0;
   const items = rawItems
     .map(normalizeItem)
-    .filter((it) => it.arabe && it.espanol);
+    .filter((it) => {
+      if (it.arabe && it.espanol) return true;
+      descartados += 1;
+      console.log(`[importar] descartado (sin arabe o sin espanol): ${JSON.stringify(it)}`);
+      return false;
+    });
+
+  console.log(`[importar] tras normalizar: ${items.length} válidos, ${descartados} descartados`);
 
   // NO se escribe en la base de datos: solo se devuelven propuestas.
   return jsonResponse(req, { items });
