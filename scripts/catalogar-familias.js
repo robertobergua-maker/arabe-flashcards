@@ -16,29 +16,13 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
+import { sanitizeFamilias, buildFamiliasPromptBlock } from '../src/constants/familias.js';
 
 // --- Configuración ---------------------------------------------------------
 
 const MODEL = 'gpt-4o-mini';
 const BATCH_SIZE = 25; // tarjetas por petición a la IA
 const PAGE_SIZE = 1000; // tarjetas por página al leer de Supabase
-
-// Lista CERRADA de familias temáticas válidas para A2.
-// La IA solo puede elegir valores de esta lista.
-const FAMILIAS_VALIDAS = [
-  'Familia y Relaciones',
-  'Casa y Vivienda',
-  'Comida y Bebida',
-  'Rutina y Tiempo Libre',
-  'Ciudad y Transporte',
-  'Compras',
-  'Salud',
-  'Trabajo y Estudios',
-  'Viajes y Clima',
-  'Gramática y Conectores',
-];
-
-const FAMILIAS_SET = new Set(FAMILIAS_VALIDAS);
 
 // --- Flags de línea de comandos --------------------------------------------
 
@@ -109,28 +93,26 @@ async function fetchCards() {
   return all;
 }
 
-/**
- * Normaliza la respuesta de la IA para una tarjeta: deja solo familias válidas,
- * sin duplicados. Si no hay ninguna válida, cae a "Gramática y Conectores"
- * como familia neutra por defecto (evita dejar la tarjeta sin catalogar).
- */
-function sanitizeFamilies(rawFamilies) {
-  const list = Array.isArray(rawFamilies) ? rawFamilies : [];
-  const valid = [...new Set(list.map((f) => String(f).trim()))].filter((f) => FAMILIAS_SET.has(f));
-  return valid.length > 0 ? valid : ['Gramática y Conectores'];
-}
-
 const SYSTEM_PROMPT = `Eres un catalogador experto de vocabulario de árabe para estudiantes de nivel A2.
-Tu tarea es asignar a cada tarjeta una o más FAMILIAS temáticas genéricas.
+Tu tarea es asignar a cada tarjeta una o más FAMILIAS.
 
-Debes elegir EXCLUSIVAMENTE valores de esta lista cerrada (copiados literalmente, con las mismas mayúsculas y acentos):
-${FAMILIAS_VALIDAS.map((f) => `- ${f}`).join('\n')}
+Debes elegir EXCLUSIVAMENTE valores de esta lista cerrada (copia el NOMBRE literal, con las mismas mayúsculas y acentos). Hay dos grupos: VOCABULARIO y GRAMÁTICA:
+${buildFamiliasPromptBlock()}
 
-Reglas estrictas:
-- NO inventes familias nuevas ni variantes.
-- NO uses etiquetas como "Pista", "Vocabulario lección X", nombres de lección, números ni categorías del material original.
-- Asigna entre 1 y 3 familias por tarjeta, las más representativas.
-- Si una palabra es puramente gramatical (pronombres, preposiciones, conjunciones, verbos auxiliares, conectores), usa "Gramática y Conectores".
+Reglas de clasificación (OBLIGATORIAS):
+- Clasifica por el SIGNIFICADO de la tarjeta, NO por los nombres propios ni el contexto del diálogo.
+- Asigna como máximo 3 familias por tarjeta; normalmente 1 de VOCABULARIO + 1 de GRAMÁTICA si aplica.
+- Las familias del grupo GRAMÁTICA SOLO cuando la tarjeta trate de ese punto gramatical; NO las añadas por defecto.
+- Las frases de saludo, agradecimiento o despedida SIEMPRE van a "Saludos y cortesía".
+- "Descripción física" y "Emociones y estados" son SOLO para personas. Los adjetivos sobre cosas o lugares (grande, bonito, limpio, excelente) NO van ahí: clasifícalos por el TEMA de la frase.
+- Lugares relacionados con viajar (aeropuerto, hotel, estación) → "Transporte y viajes".
+- Escuela, estudiante, universidad, biblioteca → "Clase y estudios".
+- Oficios y personas que trabajan (peluquero, médico, vendedor) → "Trabajo y profesiones", aunque exista un lugar con nombre parecido.
+- Colores de pelo y de ojos (moreno, rubio) → "Colores" y "Descripción física".
+- Si la frase menciona un miembro de la familia (hijos, hermanos), incluye "Familia".
+- Si NINGUNA familia de la lista encaja, devuelve un array de familias VACÍO ([]). NO inventes ni fuerces una familia.
+- NO inventes familias nuevas ni variantes. NO uses etiquetas como "Pista", "Vocabulario lección X", nombres de lección ni categorías del material original.
+- Devuelve el NOMBRE de la familia tal cual aparece en la lista.
 - Responde SOLO con JSON válido.`;
 
 /**
@@ -179,7 +161,7 @@ ${JSON.stringify(payload, null, 2)}`;
   for (const item of resultados) {
     const id = item?.id;
     if (id === undefined || id === null) continue;
-    byId.set(Number(id), sanitizeFamilies(item.familias));
+    byId.set(Number(id), sanitizeFamilias(item.familias));
   }
   return byId;
 }
@@ -211,6 +193,7 @@ async function main() {
   const batches = chunk(cards, BATCH_SIZE);
   let updated = 0;
   let failed = 0;
+  const unclassified = []; // tarjetas sin ninguna familia válida (no se tocan)
 
   for (let i = 0; i < batches.length; i += 1) {
     const batch = batches[i];
@@ -226,7 +209,14 @@ async function main() {
     }
 
     for (const card of batch) {
-      const familias = classification.get(Number(card.id)) || sanitizeFamilies([]);
+      const familias = classification.get(Number(card.id)) || [];
+
+      // Sin familia válida: no se actualiza; se registra como "sin clasificar".
+      if (familias.length === 0) {
+        unclassified.push(card);
+        continue;
+      }
+
       if (DRY_RUN) {
         console.log(`\n   [dry-run] #${card.id} "${card.spanish || card.arabic}" -> ${familias.join(', ')}`);
         updated += 1;
@@ -248,9 +238,17 @@ async function main() {
   }
 
   console.log('\n🎉 Catalogación terminada.');
-  console.log(`   Actualizadas: ${updated}`);
+  console.log(`   ${DRY_RUN ? 'A actualizar' : 'Actualizadas'}: ${updated}`);
   if (failed > 0) console.log(`   Con errores:  ${failed}`);
-  if (DRY_RUN) console.log('   (DRY-RUN: no se escribió nada en Supabase)');
+
+  if (unclassified.length > 0) {
+    console.log(`\n⚠️  Sin clasificar (no se ${DRY_RUN ? 'actualizarían' : 'actualizaron'}): ${unclassified.length}`);
+    for (const card of unclassified) {
+      console.log(`   - #${card.id}: "${card.spanish || ''}" / "${card.arabic || ''}"`);
+    }
+  }
+
+  if (DRY_RUN) console.log('\n   (DRY-RUN: no se escribió nada en Supabase)');
 }
 
 main().catch((error) => {

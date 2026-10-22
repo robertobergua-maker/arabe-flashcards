@@ -24,7 +24,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient } from '@supabase/supabase-js';
 import OpenAI from 'openai';
-import { FAMILIAS_A2, sanitizeFamilias } from '../src/constants/familias.js';
+import { sanitizeFamilias, buildFamiliasPromptBlock } from '../src/constants/familias.js';
 
 // --- Configuración ---------------------------------------------------------
 
@@ -137,15 +137,25 @@ function classifyFile(file) {
 const EXTRACTION_SYSTEM_PROMPT = `Eres un lexicógrafo experto de árabe para estudiantes de español de nivel A2.
 Extraes vocabulario (palabras y frases cortas) de material de clase y lo catalogas.
 
-Debes asignar a cada entrada una o más FAMILIAS, eligiendo EXCLUSIVAMENTE de esta lista cerrada (copiadas literalmente):
-${FAMILIAS_A2.map((f) => `- ${f}`).join('\n')}
+Debes asignar a cada entrada una o más FAMILIAS, eligiendo EXCLUSIVAMENTE de esta lista cerrada (copia el NOMBRE literal, con las mismas mayúsculas y acentos). Hay dos grupos: VOCABULARIO y GRAMÁTICA:
+${buildFamiliasPromptBlock()}
 
-Reglas:
-- NO inventes familias nuevas ni variantes.
-- NO uses etiquetas como "Pista", "Vocabulario lección X", números de lección ni categorías del material.
+Reglas de clasificación (OBLIGATORIAS):
+- Clasifica por el SIGNIFICADO de la entrada, NO por los nombres propios ni el contexto del diálogo.
+- Asigna como máximo 3 familias por entrada; normalmente 1 de VOCABULARIO + 1 de GRAMÁTICA si aplica.
+- Las familias del grupo GRAMÁTICA SOLO cuando la entrada trate de ese punto gramatical; NO las añadas por defecto.
+- Las frases de saludo, agradecimiento o despedida SIEMPRE van a "Saludos y cortesía".
+- "Descripción física" y "Emociones y estados" son SOLO para personas. Los adjetivos sobre cosas o lugares (grande, bonito, limpio, excelente) NO van ahí: clasifícalos por el TEMA de la frase.
+- Lugares relacionados con viajar (aeropuerto, hotel, estación) → "Transporte y viajes".
+- Escuela, estudiante, universidad, biblioteca → "Clase y estudios".
+- Oficios y personas que trabajan (peluquero, médico, vendedor) → "Trabajo y profesiones", aunque exista un lugar con nombre parecido.
+- Colores de pelo y de ojos (moreno, rubio) → "Colores" y "Descripción física".
+- Si la frase menciona un miembro de la familia (hijos, hermanos), incluye "Familia".
+- Si NINGUNA familia de la lista encaja, devuelve un array de familias VACÍO ([]). NO inventes ni fuerces una familia.
+- NO inventes familias nuevas ni variantes. NO uses etiquetas como "Pista", "Vocabulario lección X", números de lección ni categorías del material.
+- Devuelve el NOMBRE de la familia tal cual aparece en la lista.
 - Conserva el árabe en escritura árabe (con vocalización/harakat si aparece en el original).
 - El significado en español debe ser claro y conciso.
-- Si una entrada es puramente gramatical (pronombres, preposiciones, conjunciones, partículas), usa "Gramática, Conectores y Partículas".
 - Responde SOLO con JSON válido.`;
 
 function buildExtractionUserText(sourceLabel) {
@@ -307,7 +317,14 @@ async function processEntry(entry, index, stats) {
     return;
   }
 
-  // Nueva tarjeta.
+  // Nueva tarjeta. Si no tiene ninguna familia válida, NO se inserta:
+  // se registra como "sin clasificar" para revisión manual.
+  if (!entry.familias || entry.familias.length === 0) {
+    stats.sinClasificar.push(entry);
+    console.log(`[SIN CLASIFICAR] "${entry.espanol}" (${entry.arabe}) — no se inserta.`);
+    return;
+  }
+
   const record = {
     arabic: entry.arabe,
     spanish: entry.espanol,
@@ -371,7 +388,7 @@ async function main() {
   const index = await buildExistingIndex();
   console.log(`   ${index.size} término(s) únicos ya en la base de datos.`);
 
-  const stats = { nuevos: 0, actualizados: 0, omitidos: 0, archivos: 0 };
+  const stats = { nuevos: 0, actualizados: 0, omitidos: 0, archivos: 0, sinClasificar: [] };
 
   for (const file of files) {
     const kind = classifyFile(file);
@@ -409,7 +426,15 @@ async function main() {
   console.log(`   Nuevas insertadas:   ${stats.nuevos}`);
   console.log(`   Actualizadas:        ${stats.actualizados}`);
   console.log(`   Omitidas (ya estaban): ${stats.omitidos}`);
-  if (DRY_RUN) console.log('   (DRY-RUN: no se escribió nada en Supabase)');
+
+  if (stats.sinClasificar.length > 0) {
+    console.log(`\n⚠️  Sin clasificar (no se insertaron): ${stats.sinClasificar.length}`);
+    for (const entry of stats.sinClasificar) {
+      console.log(`   - "${entry.espanol}" / "${entry.arabe}"`);
+    }
+  }
+
+  if (DRY_RUN) console.log('\n   (DRY-RUN: no se escribió nada en Supabase)');
 }
 
 main().catch((error) => {
