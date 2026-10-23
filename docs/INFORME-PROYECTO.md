@@ -32,8 +32,8 @@ En la última fase (**importacion-servidor**) se **sacó toda la IA del navegado
 
 | Área | Estado | Nota |
 |------|--------|------|
-| Build de producción | 🟢 Pasa | Code-splitting efectivo |
-| Rendimiento (bundle inicial) | 🟢 Muy mejorado | 982 KB → 105 KB |
+| Build de producción | 🟢 Pasa | `pdfjs` perezoso; OpenAI fuera del navegador |
+| Rendimiento (bundle inicial) | 🟢 Estable | ~452 KB / 129 KB gzip; `pdf` (~407 KB) perezoso |
 | Sistema de familias A2 | 🟢 Implementado | UI + scripts comparten constante |
 | Pipeline de ingestión | 🟢 Implementado | Anti-duplicados + dry-run |
 | Calidad de código (lint) | 🟢 Mejorado | 53 → 16 problemas |
@@ -160,7 +160,7 @@ Estado del proyecto antes de las intervenciones, documentado para dejar constanc
 
 ## 6. Rendimiento del bundle
 
-El code-splitting es el mayor logro técnico del proyecto:
+Estado real del build de producción tras sacar la IA al servidor:
 
 | Chunk | Tamaño | Gzip | Carga |
 |-------|--------|------|-------|
@@ -168,7 +168,7 @@ El code-splitting es el mayor logro técnico del proyecto:
 | `index.css` | 43.7 KB | 8.5 KB | Inicial |
 | `pdf` (pdfjs-dist) | 407.6 KB | 119.3 KB | Perezosa (solo al subir un PDF) |
 
-Con la IA en el servidor, el **chunk de OpenAI (~432 KB) desaparece del navegador por completo**. El código de la app principal y el de las utilidades que antes se cargaban de forma perezosa junto a OpenAI se consolidan ahora en el chunk `index`, que incluye `@supabase/supabase-js` para invocar las Edge Functions. El bundle inicial sigue muy por debajo del monolito de ~982 KB del punto de partida, y ya **no contiene** el SDK de OpenAI, la cadena `dangerouslyAllowBrowser` ni llamadas a `api.openai.com` (verificado sobre los `.js` de `dist/`).
+Con la IA en el servidor, el **SDK de OpenAI (que antes era un chunk perezoso de ~440 KB) desaparece del navegador por completo**. El chunk inicial `index` queda en ~452 KB (129 KB gzip) e incluye React, `@supabase/supabase-js` (necesario desde el arranque para auth, datos e invocar las Edge Functions) y el código de la app; `pdfjs` sigue siendo el único chunk perezoso (~407 KB), que solo se descarga al importar un PDF. El tamaño del chunk inicial es prácticamente el mismo que antes de mover la IA (el peso que se cargaba al arrancar no ha crecido), y el bundle ya **no contiene** el SDK de OpenAI, la cadena `dangerouslyAllowBrowser` ni llamadas a `api.openai.com` (verificado sobre los `.js` de `dist/`). El punto de partida del proyecto era un único bundle de ~982 KB sin trocear.
 
 ---
 
