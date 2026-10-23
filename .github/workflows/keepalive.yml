@@ -7,15 +7,25 @@ on:
 
 jobs:
   ping-supabase:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Ping flashcards table
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: |
-          test -n "$SUPABASE_URL"
-          test -n "$SUPABASE_ANON_KEY"
+          missing=0
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "::error::Falta el secreto SUPABASE_URL (Settings -> Secrets and variables -> Actions)."
+            missing=1
+          fi
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Falta el secreto SUPABASE_ANON_KEY (Settings -> Secrets and variables -> Actions)."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
           curl --fail-with-body --silent --show-error \
             --get "$SUPABASE_URL/rest/v1/flashcards" \
             --data-urlencode "select=id" \
