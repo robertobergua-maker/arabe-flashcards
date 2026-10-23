@@ -1,10 +1,10 @@
 # Informe del proyecto — `arabe-flashcards`
 
-**Fecha:** 21 de octubre de 2026
-**Alcance:** Documento único que recoge el recorrido completo del proyecto: la revisión inicial, el trabajo de actualización y limpieza realizado, y el estado final verificado.
+**Fecha:** 22 de octubre de 2026
+**Alcance:** Documento único que recoge el recorrido completo del proyecto: la revisión inicial, el trabajo de actualización y limpieza, el endurecimiento de seguridad y la migración de la IA al servidor (Edge Functions) con las dimensiones `tipo` y `clase de palabra`.
 
 **Estado final — build:** ✅ Pasa (`npm run build`, exit 0)
-**Estado final — lint:** 🟢 22 problemas (17 errores, 5 warnings) — por debajo del baseline inicial de 25.
+**Estado final — lint:** 🟢 16 problemas (11 errores, 5 warnings) — todos preexistentes en los componentes de juego; por debajo del límite de 22.
 
 ---
 
@@ -26,7 +26,9 @@
 
 `arabe-flashcards` es un sistema de flashcards de árabe para **nivel A2**, construido con **React 19 + Vite 7 + Supabase**, con herramientas de administración asistidas por IA (OpenAI) y scripts de línea de comandos para catalogación e ingestión de vocabulario.
 
-El proyecto partía de un estado funcional pero con deuda técnica (archivos de respaldo versionados, código duplicado, módulo de examen pesado, credenciales en el cliente). A lo largo de varias iteraciones se reorientó la experiencia hacia **familias temáticas A2**, se **ocultó el módulo de examen**, se añadió un **pipeline de ingestión anti-duplicados** y se hizo una **limpieza a fondo**. En la última fase se **endureció la seguridad**: las credenciales del cliente pasaron a variables de entorno (`import.meta.env.VITE_*`), la autorización de administrador se migró de una contraseña embebida (`"1234"`) a **Supabase Auth** (modo admin de clave única, sesión real), y se definieron políticas **RLS** que dejan la lectura pública pero restringen la escritura al usuario admin por email. Hoy está en su mejor estado medible: build verde, lint por debajo de su línea base histórica, bundle inicial reducido en un ~89 % y la escritura de datos protegida en el servidor.
+El proyecto partía de un estado funcional pero con deuda técnica (archivos de respaldo versionados, código duplicado, módulo de examen pesado, credenciales en el cliente). A lo largo de varias iteraciones se reorientó la experiencia hacia **familias temáticas A2**, se **ocultó el módulo de examen**, se añadió un **pipeline de ingestión anti-duplicados** y se hizo una **limpieza a fondo**. Después se **endureció la seguridad**: las credenciales del cliente pasaron a variables de entorno (`import.meta.env.VITE_*`), la autorización de administrador se migró de una contraseña embebida (`"1234"`) a **Supabase Auth** (modo admin de clave única, sesión real), y se definieron políticas **RLS** que dejan la lectura pública pero restringen la escritura al usuario admin por email.
+
+En la última fase (**importacion-servidor**) se **sacó toda la IA del navegador**: las llamadas a OpenAI viven ahora en **Supabase Edge Functions** (`importar`, `auditar`, `sugerir-familias`), protegidas por verificación del JWT del admin (`getUser` + `ADMIN_EMAIL`) y CORS restringido; el frontend ya **no incluye el SDK de OpenAI** ni la clave, ni `dangerouslyAllowBrowser`, ni nada en `localStorage`. Se añadieron dos dimensiones de clasificación a las tarjetas: **`tipo`** (`palabra` / `frase`) y **`clase de palabra`** (9 clases gramaticales, independiente de las familias), con migraciones SQL idempotentes, relleno por IA desde los scripts y filtros/edición en la UI. El flujo de importación se rediseñó con **pantalla de revisión editable**, **detección de duplicados** (normalización del árabe ignorando el artículo `ال`) y **fusión** con tarjetas existentes. Hoy está en su mejor estado medible: build verde, lint por debajo del límite, bundle inicial reducido (sin OpenAI) y la IA y la escritura de datos protegidas en el servidor.
 
 | Área | Estado | Nota |
 |------|--------|------|
@@ -34,10 +36,12 @@ El proyecto partía de un estado funcional pero con deuda técnica (archivos de 
 | Rendimiento (bundle inicial) | 🟢 Muy mejorado | 982 KB → 105 KB |
 | Sistema de familias A2 | 🟢 Implementado | UI + scripts comparten constante |
 | Pipeline de ingestión | 🟢 Implementado | Anti-duplicados + dry-run |
-| Calidad de código (lint) | 🟢 Mejorado | 53 → 22 problemas |
+| Calidad de código (lint) | 🟢 Mejorado | 53 → 16 problemas |
 | Limpieza del repositorio | 🟢 Resuelto | Archivos basura eliminados |
 | Seguridad de credenciales | 🟢 Resuelto | Cliente y scripts leen de `.env`; sin literales en el código |
 | Autorización de admin | 🟢 Resuelto | Supabase Auth (clave única) + RLS protege la escritura |
+| IA en el servidor | 🟢 Implementado | Edge Functions; sin OpenAI ni clave en el navegador |
+| Dimensiones `tipo` y `clase` | 🟢 Implementado | Columnas + filtros + edición en UI |
 
 ---
 
@@ -46,10 +50,11 @@ El proyecto partía de un estado funcional pero con deuda técnica (archivos de 
 - **Frontend:** React 19.2, Vite 7
 - **Estilos:** Tailwind CSS v4 (compilado local vía PostCSS)
 - **Backend / datos:** Supabase (`@supabase/supabase-js`)
-- **IA:** OpenAI SDK (`gpt-4o` / `gpt-4o-mini`), cargado de forma perezosa
-- **PDF/OCR:** `pdfjs-dist` (carga perezosa)
+- **IA (servidor):** Supabase **Edge Functions** (Deno/TypeScript) que llaman a OpenAI (`gpt-4o` / `gpt-4o-mini`) vía `fetch`. El navegador **no** incluye el SDK de OpenAI ni la clave.
+- **PDF/OCR:** `pdfjs-dist` (carga perezosa; solo extrae texto de PDF en el navegador)
 - **Iconos:** `lucide-react`
-- **Scripts Node (ESM):** catalogación e ingestión con `dotenv`
+- **Scripts Node (ESM):** catalogación e ingestión con `dotenv` (siguen usando el SDK `openai` localmente)
+- **Módulo compartido:** `supabase/functions/_shared/` es la fuente canónica única (familias, clases, normalización árabe, few-shot); la app y los scripts reexportan desde ahí.
 - **CI:** GitHub Actions (keepalive diario de Supabase)
 
 ---
@@ -76,13 +81,28 @@ El proyecto partía de un estado funcional pero con deuda técnica (archivos de 
   10. Gramática, Conectores y Partículas
 - La UI filtra por familia, muestra badges de familia en cada tarjeta y permite asignar familias con checkboxes en el formulario de alta/edición. Persiste la columna `familias` (text[]).
 
+### Dimensiones de clasificación de las tarjetas
+Además de `familias` (text[]), cada tarjeta tiene dos dimensiones **independientes**:
+- **`tipo`** (`palabra` | `frase`): columna con `CHECK`, migración `supabase/add-tipo.sql`. Sustituye a la antigua heurística `getCardType()` (que ahora solo actúa de respaldo para tarjetas sin `tipo`).
+- **`clase_palabra`** (9 clases gramaticales, independiente de las familias): columna con `CHECK`, migración `supabase/add-clase-palabra.sql`. Fuente única en `supabase/functions/_shared/clases.js`. Solo las tarjetas de tipo `palabra` reciben clase; las frases quedan en `null`. Las 9 clases: Sustantivo, Adjetivo, Artículo, Pronombre, Verbo, Adverbio, Preposición, Conjunción, Interjección.
+
+La vista principal ofrece filtros combinables por **familia**, **tipo** y **clase**; la tarjeta muestra su clase (badge), y tanto el formulario de edición como la pantalla de revisión del importador permiten editar `tipo` y `clase`.
+
+### IA en el servidor (Edge Functions)
+Toda la IA vive en Supabase Edge Functions; el navegador las invoca con `supabase.functions.invoke`, que adjunta el JWT de la sesión admin. La autorización real la hace cada función (`verifyAdmin`: `getUser` + comparación con `ADMIN_EMAIL`), porque `verify_jwt` por sí solo no basta (la clave anon también es un JWT válido). Ninguna función escribe en la BD: solo devuelven propuestas; la escritura la hace la app bajo RLS.
+- **`importar`**: recibe texto o imagen (visión), devuelve propuestas de tarjetas con `arabe`, `espanol`, `transliteracion`, `tipo`, `clase_palabra`, `familias`, `confianza` y `arabe_normalizado`. Límites de tamaño (texto ≤ 20 000 caracteres, imagen ≤ ~5 MB).
+- **`auditar`**: revisa un lote de tarjetas y devuelve incidencias con sugerencias de corrección.
+- **`sugerir-familias`**: agrupa (con service role) las tarjetas de confianza baja y propone posibles familias nuevas. Solo informativo.
+
 ### Herramientas de administración (en la app)
-- Importador inteligente (texto / archivo / cámara).
-- Mantenimiento de BD: editor rápido, buscador de duplicados y auditor con IA.
-- OpenAI y pdfjs se cargan solo al usar estas herramientas (no en el arranque).
+- **Importador inteligente** (texto / archivo / cámara) sin clave de API: llama a la función `importar`, detecta duplicados contra la BD (clave de deduplicación = árabe normalizado sin el artículo `ال`), muestra una **pantalla de revisión editable** (editar campos, elegir familias/clase, descartar) con opción de **omitir o fusionar** las que ya existen, y guarda aplicando las reglas de confianza (editada por el admin → `alta`; si no, conserva la de la IA).
+- **Mantenimiento de BD:** editor rápido, buscador de duplicados, **Auditoría IA** (función `auditar`) y **Sugerir familias** (función `sugerir-familias`).
+- `pdfjs` se carga de forma perezosa solo al subir un PDF; el SDK de OpenAI ya no se usa en el navegador.
 
 ### Scripts de línea de comandos
-- `npm run catalogar`: asigna familias a tarjetas existentes mediante IA (`gpt-4o-mini`). Flags `--force` y `--dry-run`.
+- `npm run catalogar`: asigna familias a tarjetas existentes mediante IA (`gpt-4o-mini`). Flags `--force` y `--dry-run`. Además:
+  - `--solo-tipo`: rellena la columna `tipo` por heurística local (sin IA), sin tocar familias.
+  - `--solo-clase`: rellena `clase_palabra` (y `tipo` si falta) con IA, sin tocar familias.
 - `npm run ingestar`: pipeline de ingestión de aportes (txt / imagen / PDF / carpeta) con normalización del árabe, extracción con IA y **prevención estricta de duplicados** (merge de familias si ya existe). Soporta `--dry-run`.
 
 ---
@@ -144,21 +164,20 @@ El code-splitting es el mayor logro técnico del proyecto:
 
 | Chunk | Tamaño | Gzip | Carga |
 |-------|--------|------|-------|
-| `index` (app principal) | 104.6 KB | 28.5 KB | Inicial |
-| `index.css` | 41.9 KB | 8.2 KB | Inicial |
-| `pdf` (pdfjs-dist) | 407.6 KB | 119.3 KB | Perezosa (solo admin) |
-| `openai` | 432.5 KB | 123.8 KB | Perezosa (solo admin) |
+| `index` (app principal) | 452.4 KB | 129.1 KB | Inicial |
+| `index.css` | 43.7 KB | 8.5 KB | Inicial |
+| `pdf` (pdfjs-dist) | 407.6 KB | 119.3 KB | Perezosa (solo al subir un PDF) |
 
-El usuario que solo repasa vocabulario descarga ~105 KB en vez de los ~982 KB originales.
+Con la IA en el servidor, el **chunk de OpenAI (~432 KB) desaparece del navegador por completo**. El código de la app principal y el de las utilidades que antes se cargaban de forma perezosa junto a OpenAI se consolidan ahora en el chunk `index`, que incluye `@supabase/supabase-js` para invocar las Edge Functions. El bundle inicial sigue muy por debajo del monolito de ~982 KB del punto de partida, y ya **no contiene** el SDK de OpenAI, la cadena `dangerouslyAllowBrowser` ni llamadas a `api.openai.com` (verificado sobre los `.js` de `dist/`).
 
 ---
 
 ## 7. Problemas pendientes
 
-### Calidad de código 🟡 (22 problemas de lint restantes)
-Todos preexistentes y ajenos a la limpieza del examen:
+### Calidad de código 🟡 (16 problemas de lint restantes)
+Todos preexistentes y concentrados en los componentes de juego (la reescritura del importador y del auditor redujo el total de 22 a 16):
 - `react-hooks/set-state-in-effect`: varios componentes de juego (QuizGame, MemoryGame, TrueFalseGame, etc.) llaman a `setState` de forma síncrona dentro de `useEffect`. No rompen la app, pero pueden provocar renders en cascada.
-- Variables locales sin usar puntuales (`e`, `id`, `onBack`, `refreshCards`).
+- Variables locales sin usar puntuales (`e`, `id`, `onBack`).
 - Alguna dependencia faltante en `useEffect` (`exhaustive-deps`).
 
 ### Seguridad 🟢 (resuelto en la fase admin-auth-security)
@@ -168,6 +187,7 @@ Todos preexistentes y ajenos a la limpieza del examen:
 
 ### Pendiente de verificación manual
 - **Login admin real:** requiere crear el usuario admin en Supabase y probar el inicio/cierre de sesión en la app (no verificable automáticamente en este entorno).
+- **Flujo de IA en el servidor:** probar en la app (con sesión admin) el importador (texto / PDF / imagen), la pantalla de revisión con dedup y fusión, la Auditoría IA y Sugerir familias; requiere las Edge Functions desplegadas y los secretos `OPENAI_API_KEY` / `ADMIN_EMAIL` configurados (ya hechos, según el estado actual).
 
 ---
 
@@ -198,13 +218,23 @@ Para que la seguridad quede activa en producción, hay que hacer a mano, **en es
   ```sql
   alter table flashcards add column if not exists familias text[];
   ```
+- `familias_confianza text` (`alta`/`media`/`baja`) — migración `supabase/add-familias-confianza.sql`.
+- `tipo text` (`palabra`/`frase`) — migración `supabase/add-tipo.sql` (idempotente).
+- `clase_palabra text` (9 clases) — migración `supabase/add-clase-palabra.sql` (idempotente).
 - Opcionalmente `arabe_normalizado text` para el script de ingestión (tiene fallback si no existe).
 
-### Variables de entorno (`.env`, no versionado)
+### Variables de entorno de los scripts (`.env`, no versionado)
 - `SUPABASE_URL` — URL del proyecto (Supabase → Project Settings → API).
 - `SUPABASE_SERVICE_ROLE_KEY` — clave `service_role`, solo para los scripts de servidor (nunca en el frontend).
-- `OPENAI_API_KEY` — clave de OpenAI.
+- `OPENAI_API_KEY` — clave de OpenAI (la usan los scripts Node localmente).
+
+### Variables de entorno del frontend (build, `VITE_*`)
+- `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_ADMIN_EMAIL`.
+
+### Secretos de las Edge Functions (Supabase → `supabase secrets set`)
+- `OPENAI_API_KEY` y `ADMIN_EMAIL` (nunca en el cliente ni en el repo). Las funciones leen además `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` del entorno del proyecto.
+- Despliegue: `supabase functions deploy importar|auditar|sugerir-familias --no-verify-jwt`.
 
 ---
 
-*Verificaciones ejecutadas para este informe: `npm run build` (exit 0) y `npm run lint` (22 problemas: 17 errores / 5 warnings), además de la revisión de la estructura de `src/`, `scripts/` y `src/constants/`.*
+*Verificaciones ejecutadas para este informe: `npm run build` (exit 0), `npm run lint` (16 problemas: 11 errores / 5 warnings), comprobación de que los `.js` de `dist/` no contienen `dangerouslyAllowBrowser` ni `api.openai.com`, y revisión de la estructura de `src/`, `scripts/`, `src/constants/` y `supabase/functions/`.*

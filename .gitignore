@@ -17,6 +17,9 @@ dist-ssr
 .env.*
 !.env.example
 
+# Estado local del CLI de Supabase (proyecto enlazado, versiones)
+supabase/.temp/
+
 # CSV de revisión de familias (intermedio, editable en Excel)
 docs/revision-familias.csv
 

@@ -7,6 +7,11 @@
 //   node scripts/catalogar-familias.js            -> solo tarjetas sin familias
 //   node scripts/catalogar-familias.js --force    -> recataloga TODAS las tarjetas
 //   node scripts/catalogar-familias.js --dry-run  -> no escribe en Supabase, solo muestra el plan
+//   node scripts/catalogar-familias.js --solo-tipo
+//                                                 -> NO toca familias; rellena la
+//                                                    columna `tipo` (palabra|frase) por
+//                                                    heurística local (sin IA) de las
+//                                                    tarjetas que aún no tienen tipo.
 //   node scripts/catalogar-familias.js --solo-clase
 //                                                 -> NO toca familias; rellena la
 //                                                    dimensión `clase_palabra` (y `tipo`
@@ -38,6 +43,7 @@ const args = process.argv.slice(2);
 const FORCE = args.includes('--force');
 const DRY_RUN = args.includes('--dry-run');
 const SOLO_CLASE = args.includes('--solo-clase');
+const SOLO_TIPO = args.includes('--solo-tipo');
 
 // --- Validación de entorno -------------------------------------------------
 
@@ -392,7 +398,66 @@ async function mainClase() {
 
 // --- Programa principal -----------------------------------------------------
 
+// === Dimensión TIPO (--solo-tipo) =========================================
+//
+// Rellena `tipo` ('palabra' | 'frase') sin tocar familias ni clase. Heurística
+// local barata (sin OpenAI): frase si la categoría incluye 'frases' o el español
+// tiene más de 2 palabras; en caso contrario, palabra.
+
+function inferirTipoLocal(card) {
+  if (card.category && card.category.toLowerCase().includes('frases')) return 'frase';
+  return (card.spanish || '').trim().split(/\s+/).filter(Boolean).length > 2 ? 'frase' : 'palabra';
+}
+
+async function fetchCardsTipo() {
+  const all = [];
+  for (let page = 0; page < 50; page += 1) {
+    let query = supabase
+      .from('flashcards')
+      .select('id, spanish, category, tipo')
+      .order('id', { ascending: true })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    if (!FORCE) query = query.is('tipo', null);
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data?.length) break;
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
+  }
+  return all;
+}
+
+async function mainTipo() {
+  console.log('🔌 Conectando a Supabase...');
+  console.log(`   Modo: TIPO (heurística local) · ${FORCE ? 'FORCE (todas)' : 'solo tarjetas sin tipo'}${DRY_RUN ? ' · DRY-RUN' : ''}`);
+  const cards = await fetchCardsTipo();
+  console.log(`📥 ${cards.length} tarjeta(s) a clasificar por tipo.`);
+  if (cards.length === 0) { console.log('✅ No hay nada que hacer.'); return; }
+
+  let updated = 0;
+  let failed = 0;
+  for (const card of cards) {
+    const tipo = inferirTipoLocal(card);
+    if (DRY_RUN) {
+      console.log(`   [dry-run] #${card.id} "${card.spanish || ''}" -> tipo=${tipo}`);
+      updated += 1;
+      continue;
+    }
+    const { error } = await supabase.from('flashcards').update({ tipo }).eq('id', card.id);
+    if (error) { console.log(`   ❌ #${card.id}: ${error.message}`); failed += 1; } else { updated += 1; }
+  }
+
+  console.log('\n🎉 Clasificación por tipo terminada.');
+  console.log(`   ${DRY_RUN ? 'A actualizar' : 'Actualizadas'}: ${updated}`);
+  if (failed > 0) console.log(`   Con errores:  ${failed}`);
+  if (DRY_RUN) console.log('\n   (DRY-RUN: no se escribió nada en Supabase)');
+}
+
 async function main() {
+  if (SOLO_TIPO) {
+    await mainTipo();
+    return;
+  }
   if (SOLO_CLASE) {
     await mainClase();
     return;

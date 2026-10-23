@@ -121,11 +121,12 @@ Restricciones transversales (reflejadas en las tareas): **no** ejecutar SQL ni d
 - [ ] 6. Checkpoint — Edge Functions listas
   - Asegurarse de que las funciones y el módulo compartido pasan sus verificaciones; si surgen dudas, preguntar al usuario.
 
-- [ ] 7. Eliminar la IA del frontend
-  - [ ] 7.1 Quitar `loadOpenAI`, `_openaiModulePromise` y la dependencia `openai`
+- [x] 7. Eliminar la IA del frontend
+  - [x] 7.1 Quitar `loadOpenAI`, `_openaiModulePromise` y la dependencia `openai`
     - Eliminar el helper y toda carga estática/dinámica de `openai` en `src/App.jsx`
     - Eliminar `openai` de `package.json` (mantener `pdfjs-dist`)
     - Eliminar cualquier lectura/escritura de `localStorage('openai_key')`, input de API key y `dangerouslyAllowBrowser`
+    - NOTA de implementación: se eliminó TODA la IA del cliente (sin `loadOpenAI`, sin `openai_key`, sin `dangerouslyAllowBrowser`); el bundle ya no contiene OpenAI. La dependencia `openai` se MANTIENE en `package.json` porque los scripts Node (`catalogar`/`ingestar`/`revisar`/`sugerir-familias`) la usan localmente (el design fija "scripts sin cambios de dependencias"). Property 1/12 (sin clave ni SDK en el bundle) se cumplen.
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
 
   - [ ]* 7.2 Verificar ausencia de restos de IA en cliente
@@ -133,25 +134,25 @@ Restricciones transversales (reflejadas en las tareas): **no** ejecutar SQL ni d
     - **Property 1: Sin clave en cliente**
     - **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5**
 
-- [ ] 8. Reescribir `SmartImportModal` (entrada, importar, dedup, revisión, guardado)
-  - [ ] 8.1 Entrada multi-fuente y llamada a `importar`
+- [x] 8. Reescribir `SmartImportModal` (entrada, importar, dedup, revisión, guardado)
+  - [x] 8.1 Entrada multi-fuente y llamada a `importar`
     - Pestañas Texto / Archivo / Cámara sin input de API key; PDF → `loadPdfjs()` extrae texto en navegador (perezoso) y envía `modo:'texto'`; imagen/cámara → base64 con `modo:'imagen'`
     - Campo opcional "Lección / origen" enviado como `leccion`
     - Precheck de tamaño en cliente (texto ≤ 20000, imagen ≤ 5 MB): avisar y **no** enviar si se supera
     - Llamar a la Edge Function `importar` con el JWT de sesión (Bearer)
     - _Requirements: 1.2, 5.3, 12.1, 12.2, 12.3, 12.4, 17.1_
 
-  - [ ] 8.2 Detección de duplicados contra la BD
+  - [x] 8.2 Detección de duplicados contra la BD
     - Implementar `dupKey(arabe)` = `normalizarArabe(arabe)` eliminando el artículo inicial `ال`
     - Consultar tarjetas existentes y clasificar cada propuesta como `nuevo`, `ya existe` o `posible duplicado` (iguales ⟺ `dupKey` coincide)
     - _Requirements: 14.1, 14.2, 14.3_
 
-  - [ ] 8.3 Pantalla de revisión editable con omitir/fusionar
+  - [x] 8.3 Pantalla de revisión editable con omitir/fusionar
     - Tabla editable: editar campos, seleccionar familias con checkboxes, descartar filas
     - Filas `ya existe`: elegir omitir o fusionar; fusionar conserva el `id`, añade familias como unión sin duplicados y añade la Lección a `category`, sin crear tarjeta nueva
     - _Requirements: 15.1, 15.2, 15.3_
 
-  - [ ] 8.4 Guardado con reglas de confianza (escrituras bajo RLS)
+  - [x] 8.4 Guardado con reglas de confianza (escrituras bajo RLS)
     - Insert de nuevas / update de fusiones con el JWT de admin; fila editada/confirmada → `familias_confianza='alta'`; fila sin editar → conserva la confianza de la IA; `category` = Lección
     - Sustituir el antiguo `handleBulkImport` por el guardado desde revisión
     - _Requirements: 7.4, 16.1, 16.2, 16.3, 17.1_
@@ -161,25 +162,25 @@ Restricciones transversales (reflejadas en las tareas): **no** ejecutar SQL ni d
     - **Property 6 (dedup coherente), Property 7 (confianza en guardado), Property 8 (fusión)**
     - **Validates: Requirements 14.1, 14.2, 14.3, 16.1, 16.2, 16.3, 15.3**
 
-- [ ] 9. Auditor y botón de sugerir familias en el frontend
-  - [ ] 9.1 Modificar `AIAuditor` para llamar a `auditar`
+- [x] 9. Auditor y botón de sugerir familias en el frontend
+  - [x] 9.1 Modificar `AIAuditor` para llamar a `auditar`
     - Quitar API key/`localStorage('openai_key')`/input/`loadOpenAI`/`dangerouslyAllowBrowser`; `handleAudit` llama a la Edge Function `auditar` con el JWT; conservar `applyFix` como `update` directo bajo RLS
     - _Requirements: 1.2, 3.1, 3.2, 3.3, 3.4, 7.4_
 
-  - [ ] 9.2 Añadir botón "Sugerir familias nuevas" en `AdvancedMaintenanceModal`
+  - [x] 9.2 Añadir botón "Sugerir familias nuevas" en `AdvancedMaintenanceModal`
     - Botón en Mantenimiento BD que invoca `sugerir-familias` con el JWT y muestra `grupos[]`; solo informativo, sin cambios en la BD
     - _Requirements: 18.1, 18.2, 18.3_
 
-- [ ] 10. Columna `tipo` en el frontend y en los scripts
-  - [ ] 10.1 Modificar `getCardType` para usar la columna `tipo`
+- [x] 10. Columna `tipo` en el frontend y en los scripts
+  - [x] 10.1 Modificar `getCardType` para usar la columna `tipo`
     - `tipo='frase'` → `'phrase'`; `tipo='palabra'` → `'word'`; `tipo` NULL → heurística de respaldo (`category` incluye 'frases' o español > 2 palabras → `'phrase'`; resto `'word'`)
     - _Requirements: 10.1, 10.2, 10.3_
 
-  - [ ] 10.2 Añadir filtro por tipo en la vista principal
+  - [x] 10.2 Añadir filtro por tipo en la vista principal
     - Filtro con opciones `Todos` / `palabra` / `frase`, adicional al filtro por familia; filtra por `tipo` (o tipo inferido si NULL); conservar el filtro Pendientes_De_Revisar existente
     - _Requirements: 11.1, 11.2, 11.3_
 
-  - [ ] 10.3 Añadir flag `--solo-tipo` a `scripts/catalogar-familias.js`
+  - [x] 10.3 Añadir flag `--solo-tipo` a `scripts/catalogar-familias.js`
     - Con `--solo-tipo`: `update { tipo }` solo en tarjetas con `tipo` NULL, sin tocar familias ni confianza; inferir `'frase'` si `category` incluye 'frases' o español > 2 palabras, `'palabra'` en el resto
     - _Requirements: 9.1, 9.2_
 
@@ -220,34 +221,34 @@ Restricciones transversales (reflejadas en las tareas): **no** ejecutar SQL ni d
     - **Property 5b: Clase de palabra válida e independiente** (9 valores o null; frases → null; no modifica familias)
     - **Validates: Requirements 8.1, 8.2, 8.3, 9.2, 13.1, 13.2**
 
-- [ ] 15. Dimensión `clase de palabra` — UI (Tanda 2)
-  - [ ] 15.1 Filtro "Clase de palabra" en la vista principal
+- [x] 15. Dimensión `clase de palabra` — UI (Tanda 2)
+  - [x] 15.1 Filtro "Clase de palabra" en la vista principal
     - Selector con `Todas` + las 9 clases; combinable con el filtro de familia y el de tipo; filtra por `clase_palabra`
     - _Requirements: 11.1, 11.2, 11.3_
 
-  - [ ] 15.2 Mostrar la clase en la tarjeta
+  - [x] 15.2 Mostrar la clase en la tarjeta
     - Mostrar `clase_palabra` (cuando no sea null) en la tarjeta, de forma discreta y sin romper el diseño actual
     - _Requirements: 10.1, 10.2_
 
-  - [ ] 15.3 Editar la clase en la pantalla de revisión del importador
+  - [x] 15.3 Editar la clase en la pantalla de revisión del importador
     - En la tabla de revisión de `SmartImportModal`, permitir elegir/cambiar `clase_palabra` (lista de 9 + "sin clase"); deshabilitado/forzado a null en filas de tipo `frase`
     - _Requirements: 15.1, 15.2_
 
-  - [ ] 15.4 Editar la clase en el formulario de editar tarjeta
+  - [x] 15.4 Editar la clase en el formulario de editar tarjeta
     - Añadir el selector de `clase_palabra` al formulario de edición de tarjeta; guardar bajo RLS sin tocar familias
     - _Requirements: 16.1, 17.1_
 
-- [ ] 11. Verificación de build, lint, bundle y no regresión
-  - [ ] 11.1 Ejecutar `npm run build` y comprobar el bundle
+- [x] 11. Verificación de build, lint, bundle y no regresión
+  - [x] 11.1 Ejecutar `npm run build` y comprobar el bundle
     - Build sin errores; el bundle inicial no crece y baja al quitar `openai`; `pdfjs` sigue en chunk perezoso fuera del inicial
     - _Requirements: 19.1, 20.1, 20.2_
 
-  - [ ] 11.2 Ejecutar `npm run lint` dentro del límite
-    - `npm run lint` ≤ 22 problemas; recordar que las Edge Functions (TypeScript/Deno) no las lint-a el ESLint del front y **no** cuentan para el límite
+  - [x] 11.2 Ejecutar `npm run lint` dentro del límite
+    - `npm run lint` ≤ 22 problemas (resultado: 16); las Edge Functions (TypeScript/Deno) no las lint-a el ESLint del front y **no** cuentan
     - _Requirements: 19.2_
 
-  - [ ] 11.3 Comprobaciones de no regresión por inspección/grep
-    - `grep` confirma que no quedan `dangerouslyAllowBrowser`, `openai_key`, `loadOpenAI` ni `import ... openai`; verificar que no se tocaron juegos, auth admin ni RLS
+  - [x] 11.3 Comprobaciones de no regresión por inspección/grep
+    - `grep` confirma que no quedan `dangerouslyAllowBrowser`, `openai_key`, `loadOpenAI` ni `import ... openai` en `src/`; bundle de `dist/` sin `dangerouslyAllowBrowser` ni `api.openai.com`; juegos, auth admin y RLS sin cambios
     - _Requirements: 3.1, 3.2, 3.4, 21.1, 21.2, 21.3_
 
   - [ ]* 11.4 Pruebas unitarias de pureza compartida (opcional)
@@ -255,17 +256,17 @@ Restricciones transversales (reflejadas en las tareas): **no** ejecutar SQL ni d
     - **Property 11 (build/lint), Property 12 (bundle), Property 13 (no regresión)**
     - **Validates: Requirements 19.1, 19.2, 20.1, 20.2, 21.1, 21.2, 21.3**
 
-- [ ] 12. Entregable de despliegue y documentación
-  - [ ] 12.1 Actualizar `docs/INFORME-PROYECTO.md`
-    - Documentar la nueva arquitectura: IA en servidor (Edge Functions + `_shared`), columna `tipo` y flujo de importación con revisión/dedup/fusión
+- [x] 12. Entregable de despliegue y documentación
+  - [x] 12.1 Actualizar `docs/INFORME-PROYECTO.md`
+    - Documentar la nueva arquitectura: IA en servidor (Edge Functions + `_shared`), columnas `tipo` y `clase_palabra`, y flujo de importación con revisión/dedup/fusión
     - _Requirements: 22.2_
 
-  - [ ] 12.2 Redactar los comandos Supabase CLI y pasos manuales EN ORDEN
+  - [x] 12.2 Redactar los comandos Supabase CLI y pasos manuales EN ORDEN
     - Incluir, en orden: `supabase functions new importar|auditar|sugerir-familias`; `supabase secrets set OPENAI_API_KEY=... ADMIN_EMAIL=...`; `supabase link --project-ref <ref>`; ejecutar `supabase/add-tipo.sql` en SQL Editor; `npm run catalogar -- --solo-tipo`; `supabase functions deploy importar|auditar|sugerir-familias`; prueba `curl`
     - Marcar claramente que **NO** se ejecuta SQL ni se despliega ninguna función en este trabajo
     - _Requirements: 22.1_
 
-- [ ] 13. Checkpoint final — Asegurar que todo compila y el lint está dentro del límite
+- [x] 13. Checkpoint final — Asegurar que todo compila y el lint está dentro del límite
   - Asegurarse de que `npm run build` y `npm run lint` (≤22) pasan y que el entregable de despliegue está completo; si surgen dudas, preguntar al usuario.
 
 ## Notes

@@ -1,6 +1,8 @@
 ﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { FAMILIAS_A2, getCardFamilias } from './constants/familias';
+import { CLASES_PALABRA } from './constants/clases';
+import { normalizarArabe } from '../supabase/functions/_shared/arabe.js';
 import { useAdminSession } from './useAdminSession';
 import AdminLoginForm from './AdminLoginForm';
 import { 
@@ -11,13 +13,24 @@ import {
   AlertTriangle, ChevronLeft, ChevronRight, Sparkles, Database, Copy, PartyPopper
 } from 'lucide-react';
 
-// Carga perezosa de dependencias pesadas (solo se descargan cuando el admin
-// las usa, no en el arranque inicial de la app).
-let _openaiModulePromise = null;
-async function loadOpenAI() {
-  if (!_openaiModulePromise) _openaiModulePromise = import('openai');
-  const mod = await _openaiModulePromise;
-  return mod.default;
+// Llama a una Edge Function de Supabase (importar/auditar/sugerir-familias).
+// supabase.functions.invoke adjunta automáticamente el JWT de la sesión admin
+// y la apikey; la autorización real (email == ADMIN_EMAIL) la hace la función.
+async function callEdgeFunction(name, body) {
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (error) {
+    // El cuerpo de error de la función ({ error }) viene en context cuando es no-2xx.
+    let detalle = error.message || 'Error desconocido';
+    try {
+      const ctx = error.context;
+      if (ctx && typeof ctx.json === 'function') {
+        const payload = await ctx.json();
+        if (payload?.error) detalle = payload.error;
+      }
+    } catch { /* se mantiene el mensaje genérico */ }
+    throw new Error(detalle);
+  }
+  return data;
 }
 
 let _pdfjsModulePromise = null;
@@ -36,7 +49,17 @@ const removeArabicDiacritics = (text) => text ? text.replace(/[\u064B-\u065F\u06
 const normalizeForSearch = (text) => text ? text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\u064B-\u065F\u0670]/g, "") : ""; 
 const shuffleArray = (array) => { const newArray = [...array]; for (let i = newArray.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [newArray[i], newArray[j]] = [newArray[j], newArray[i]]; } return newArray; };
 const safeGetStorage = (key, fallback) => { try { const saved = localStorage.getItem(key); return saved ? JSON.parse(saved) : fallback; } catch (e) { return fallback; } };
-const getCardType = (card) => { if (!card) return 'word'; if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase'; return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word'; };
+// Deriva el tipo ('word' | 'phrase') de una tarjeta. Prioriza la columna `tipo`;
+// si está vacía (tarjetas antiguas sin clasificar), recurre a la heurística.
+const getCardType = (card) => {
+  if (!card) return 'word';
+  if (card.tipo === 'frase') return 'phrase';
+  if (card.tipo === 'palabra') return 'word';
+  if (card.category && card.category.toLowerCase().includes('frases')) return 'phrase';
+  return (card.spanish || "").trim().split(/\s+/).length > 2 ? 'phrase' : 'word';
+};
+// Opción "sin clase" en los selectores de clase de palabra.
+const CLASE_NINGUNA = '— sin clase —';
 const playSmartAudio = (text) => { if (!text) return; try { window.speechSynthesis.cancel(); const utterance = new SpeechSynthesisUtterance(text); utterance.lang = 'ar-SA'; utterance.rate = 0.7; const voices = window.speechSynthesis.getVoices(); const preferredVoice = voices.find(v => v.lang.includes('ar')); if (preferredVoice) utterance.voice = preferredVoice; window.speechSynthesis.speak(utterance); } catch (e) { console.error("Audio error", e); } };
 const APP_VIEWS = new Set(['welcome', 'flashcards']);
 // Valor especial del filtro (solo admin) para ver tarjetas con confianza baja.
@@ -171,6 +194,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedFamilia, setSelectedFamilia] = useState("Todas");
+  const [selectedTipo, setSelectedTipo] = useState("Todos"); // 'Todos' | 'palabra' | 'frase'
+  const [selectedClase, setSelectedClase] = useState("Todas"); // 'Todas' | una de las 9 clases
   const [frontLanguage, setFrontLanguage] = useState(() => localStorage.getItem('pref_lang') || "spanish");
   const [showDiacritics, setShowDiacritics] = useState(() => safeGetStorage('pref_diacritics', true));
   const { isAdminMode, loading: authLoading, error: authError, signIn, signOut, clearError } = useAdminSession();
@@ -255,10 +280,10 @@ export default function App() {
     try {
       // Editada/creada a mano por el admin -> confianza 'alta'.
       if (cardData.id) {
-        const updateData = { familias: cardData.familias || [], familias_confianza: 'alta', spanish: cardData.spanish, arabic: cardData.arabic, phonetic: cardData.phonetic };
+        const updateData = { familias: cardData.familias || [], familias_confianza: 'alta', spanish: cardData.spanish, arabic: cardData.arabic, phonetic: cardData.phonetic, tipo: cardData.tipo ?? null, clase_palabra: cardData.clase_palabra ?? null };
         const { error } = await supabase.from('flashcards').update(updateData).eq('id', cardData.id);
         if (error) throw error;
-        setCards(prev => prev.map(c => c.id === cardData.id ? { ...cardData, familias_confianza: 'alta' } : c));
+        setCards(prev => prev.map(c => c.id === cardData.id ? { ...c, ...cardData, familias_confianza: 'alta' } : c));
       } else {
         const { id, ...rest } = cardData;
         const newCardData = { ...rest, familias_confianza: 'alta' };
@@ -267,14 +292,6 @@ export default function App() {
         if (data) setCards(prev => [...prev, data[0]]);
       }
       setIsFormOpen(false); setEditingCard(null);
-    } catch (error) { alert("Error: " + error.message); }
-  };
-
-  const handleBulkImport = async (newCards) => {
-    try {
-      const { data, error } = await supabase.from('flashcards').insert(newCards).select();
-      if (error) throw error;
-      if (data) { setCards(prev => [...prev, ...data]); alert(`¡${data.length} importadas!`); setIsSmartImportOpen(false); }
     } catch (error) { alert("Error: " + error.message); }
   };
 
@@ -309,6 +326,13 @@ export default function App() {
     return base;
   }, [cards, isAdminMode, pendientesCount]);
 
+  // Clases de palabra presentes en las tarjetas (para no mostrar filtros vacíos).
+  const claseOptions = useMemo(() => {
+    const present = new Set();
+    cards.forEach(card => { if (card.clase_palabra) present.add(card.clase_palabra); });
+    return ['Todas', ...CLASES_PALABRA.filter(c => present.has(c))];
+  }, [cards]);
+
   const filteredCards = useMemo(() => {
     const normalizedTerm = normalizeForSearch(searchTerm);
     const pendientes = selectedFamilia === PENDIENTES_REVISAR;
@@ -319,11 +343,16 @@ export default function App() {
       const matchesFamilia = pendientes
         ? card.familias_confianza === 'baja'
         : (selectedFamilia === "Todas" || getCardFamilias(card).includes(selectedFamilia));
-      return matchesSearch && matchesFamilia;
+      // Tipo: usa la columna `tipo` (o la inferida) traducida a 'palabra'/'frase'.
+      const cardTipo = getCardType(card) === 'phrase' ? 'frase' : 'palabra';
+      const matchesTipo = selectedTipo === "Todos" || cardTipo === selectedTipo;
+      // Clase: solo aplica a tarjetas con clase_palabra asignada.
+      const matchesClase = selectedClase === "Todas" || card.clase_palabra === selectedClase;
+      return matchesSearch && matchesFamilia && matchesTipo && matchesClase;
     });
-    if (selectedFamilia === "Todas" && searchTerm === "") return shuffleArray(result);
+    if (selectedFamilia === "Todas" && selectedTipo === "Todos" && selectedClase === "Todas" && searchTerm === "") return shuffleArray(result);
     return result;
-  }, [cards, searchTerm, selectedFamilia]);
+  }, [cards, searchTerm, selectedFamilia, selectedTipo, selectedClase]);
 
   if (currentView === 'welcome') return <WelcomeScreen onStartFlashcards={goToFlashcards} />;
 
@@ -343,10 +372,24 @@ export default function App() {
             </div>
             <div className="relative md:w-64">
                 <Filter className="absolute left-3 top-2.5 w-4 h-4 text-white/50 pointer-events-none" />
-                <select value={selectedFamilia} onChange={(e) => setSelectedFamilia(e.target.value)} className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer">
+                <select value={selectedFamilia} onChange={(e) => setSelectedFamilia(e.target.value)} className="w-full pl-9 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer" aria-label="Filtrar por familia">
                     {familiaOptions.map(opt => <option key={opt.value} value={opt.value} className="text-slate-800 bg-white">{opt.label}</option>)}
                 </select>
             </div>
+            <div className="relative md:w-36">
+                <select value={selectedTipo} onChange={(e) => setSelectedTipo(e.target.value)} className="w-full px-3 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer" aria-label="Filtrar por tipo">
+                    <option value="Todos" className="text-slate-800 bg-white">Tipo: todos</option>
+                    <option value="palabra" className="text-slate-800 bg-white">Palabras</option>
+                    <option value="frase" className="text-slate-800 bg-white">Frases</option>
+                </select>
+            </div>
+            {claseOptions.length > 1 && (
+              <div className="relative md:w-44">
+                  <select value={selectedClase} onChange={(e) => setSelectedClase(e.target.value)} className="w-full px-3 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer" aria-label="Filtrar por clase de palabra">
+                      {claseOptions.map(c => <option key={c} value={c} className="text-slate-800 bg-white">{c === 'Todas' ? 'Clase: todas' : c}</option>)}
+                  </select>
+              </div>
+            )}
             <div className="flex gap-2">
                 <button onClick={() => setIsGamesHubOpen(true)} className="p-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-white transition-colors shadow-lg" title="Juegos"><Gamepad2 className="w-6 h-6" /></button>
                 <div className="flex items-center gap-2 bg-black/20 rounded-lg p-1 border border-white/10">
@@ -384,8 +427,8 @@ export default function App() {
         <DeveloperCredit />
       </div>
       {isFormOpen && <CardFormModal card={editingCard} onSave={handleSaveCard} onClose={() => setIsFormOpen(false)} />}
-      {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} onImport={handleBulkImport} />}
-      {isMaintenanceOpen && <AdvancedMaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} setCards={setCards} refreshCards={fetchAllCards} />}
+      {isSmartImportOpen && <SmartImportModal onClose={() => setIsSmartImportOpen(false)} existingCards={cards} onSaved={fetchAllCards} />}
+      {isMaintenanceOpen && <AdvancedMaintenanceModal onClose={() => setIsMaintenanceOpen(false)} cards={cards} setCards={setCards} />}
       {isGamesHubOpen && <GamesHub onClose={() => setIsGamesHubOpen(false)} cards={cards} showDiacritics={showDiacritics} />}
       {isLoginOpen && !isAdminMode && (
         <AdminLoginForm
@@ -402,15 +445,16 @@ export default function App() {
 // (DEJA AQUÍ DEBAJO EL RESTO DE TUS FUNCIONES: AdvancedMaintenanceModal, TableEditor, etc... QUE YA TENÍAS)
 
 // --- PANEL DE MANTENIMIENTO AVANZADO ---
-function AdvancedMaintenanceModal({ onClose, cards, setCards, refreshCards }) {
+function AdvancedMaintenanceModal({ onClose, cards, setCards }) {
   const [activeTab, setActiveTab] = useState('table'); 
   return (
     <div className="fixed inset-0 bg-slate-100 z-50 flex flex-col">
-        <header className="bg-slate-900 text-white shadow-md z-20"><div className="w-full px-6 py-4 flex justify-between items-center"><h1 className="text-xl font-bold flex items-center gap-2"><Settings className="w-6 h-6 text-blue-400"/> Mantenimiento BD</h1><button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X className="w-6 h-6"/></button></div><div className="flex px-6 overflow-x-auto border-t border-slate-800"><button onClick={() => setActiveTab('table')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'table' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-400'}`}><Database className="w-4 h-4"/> Editor Rápido</button><button onClick={() => setActiveTab('duplicates')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'duplicates' ? 'border-amber-400 text-amber-400' : 'border-transparent text-slate-400'}`}><Copy className="w-4 h-4"/> Duplicados</button><button onClick={() => setActiveTab('audit')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'audit' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-400'}`}><Sparkles className="w-4 h-4"/> Auditoría IA</button></div></header>
+        <header className="bg-slate-900 text-white shadow-md z-20"><div className="w-full px-6 py-4 flex justify-between items-center"><h1 className="text-xl font-bold flex items-center gap-2"><Settings className="w-6 h-6 text-blue-400"/> Mantenimiento BD</h1><button onClick={onClose} className="p-2 hover:bg-slate-800 rounded-full transition-colors"><X className="w-6 h-6"/></button></div><div className="flex px-6 overflow-x-auto border-t border-slate-800"><button onClick={() => setActiveTab('table')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'table' ? 'border-blue-400 text-blue-400' : 'border-transparent text-slate-400'}`}><Database className="w-4 h-4"/> Editor Rápido</button><button onClick={() => setActiveTab('duplicates')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'duplicates' ? 'border-amber-400 text-amber-400' : 'border-transparent text-slate-400'}`}><Copy className="w-4 h-4"/> Duplicados</button><button onClick={() => setActiveTab('audit')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'audit' ? 'border-purple-400 text-purple-400' : 'border-transparent text-slate-400'}`}><Sparkles className="w-4 h-4"/> Auditoría IA</button><button onClick={() => setActiveTab('suggest')} className={`flex items-center gap-2 px-6 py-3 font-bold text-sm border-b-2 transition-colors ${activeTab === 'suggest' ? 'border-emerald-400 text-emerald-400' : 'border-transparent text-slate-400'}`}><Sparkles className="w-4 h-4"/> Sugerir familias</button></div></header>
         <main className="flex-1 overflow-hidden p-4">
             {activeTab === 'table' && <TableEditor cards={cards} setCards={setCards} />}
             {activeTab === 'duplicates' && <DuplicateFinder cards={cards} setCards={setCards} />}
-            {activeTab === 'audit' && <AIAuditor cards={cards} setCards={setCards} refreshCards={refreshCards} />}
+            {activeTab === 'audit' && <AIAuditor cards={cards} setCards={setCards} />}
+            {activeTab === 'suggest' && <FamilySuggester />}
         </main>
     </div>
   );
@@ -435,30 +479,60 @@ function DuplicateFinder({ cards, setCards }) {
     );
 }
 
-function AIAuditor({ cards, setCards, refreshCards }) {
-    const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || ""); const [loading, setLoading] = useState(false); const [logs, setLogs] = useState([]); const [auditResults, setAuditResults] = useState([]);
+function AIAuditor({ cards, setCards }) {
+    const [loading, setLoading] = useState(false); const [logs, setLogs] = useState([]); const [auditResults, setAuditResults] = useState([]);
     const handleAudit = async () => {
-        if (!apiKey) { alert("Necesitas tu API Key de OpenAI"); return; }
-        setLoading(true); setAuditResults([]); setLogs(["Conectando con IA..."]);
+        setLoading(true); setAuditResults([]); setLogs(["Conectando con el servidor de IA..."]);
         try {
-            const OpenAI = await loadOpenAI();
-            const openai = new OpenAI({ apiKey: apiKey, dangerouslyAllowBrowser: true });
-            let allIssues = []; const cardsToAudit = cards.slice(0, 150); 
-            for (let i = 0; i < cardsToAudit.length; i += 15) {
-                const batch = cardsToAudit.slice(i, i + 15);
-                setLogs(prev => [`Analizando lote ${Math.floor(i/15)+1}...`, ...prev.slice(0,4)]);
-                const miniBatch = batch.map(c => ({ id: c.id, arabic: c.arabic, spanish: c.spanish }));
-                const prompt = `Audita este lote. REGLAS: 1. Elimina tanwin/nunación innecesaria en el árabe. 2. Mantén solo excepciones fijas que siempre la usan, como شكرًا، عفوًا، أيضًا، جدًا، طبعًا، دائمًا، أحيانًا، مرحبًا، أهلًا، صباحًا، مساءً. 3. Corrige mala traducción al español. IGNORA SI ESTÁ BIEN. Responde SOLO con JSON array: [{"id": 123, "problem": "motivo", "suggestion": "texto corregido", "field": "arabic" o "spanish"}]. DATOS: ${JSON.stringify(miniBatch)}`;
-                const response = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: prompt }], temperature: 0.1 });
-                let rawContent = response.choices[0].message.content; const start = rawContent.indexOf('['); const end = rawContent.lastIndexOf(']');
-                if (start !== -1 && end !== -1) { try { const batchIssues = JSON.parse(rawContent.substring(start, end + 1)); const validIssues = batchIssues.filter(issue => { const card = batch.find(c => c.id === issue.id); if(!card) return false; const targetField = issue.field || (/[؀-ۿ]/.test(issue.suggestion) ? 'arabic' : 'spanish'); return card[targetField] !== issue.suggestion; }); allIssues = [...allIssues, ...validIssues]; } catch(e) {} }
-            }
-            setAuditResults(allIssues); setLogs(prev => [`✅ Auditoría terminada. ${allIssues.length} sugerencias.`, ...prev]);
+            // La Edge Function trocea en lotes de 15 internamente; enviamos hasta 150.
+            const cardsToAudit = cards.slice(0, 150).map(c => ({ id: c.id, arabic: c.arabic, spanish: c.spanish, phonetic: c.phonetic }));
+            const data = await callEdgeFunction('auditar', { cards: cardsToAudit });
+            const allIssues = Array.isArray(data?.issues) ? data.issues : [];
+            setAuditResults(allIssues); setLogs([`✅ Auditoría terminada. ${allIssues.length} sugerencias.`]);
         } catch (e) { setLogs(prev => [`❌ Error: ${e.message}`, ...prev]); } finally { setLoading(false); }
     };
-    const applyFix = async (issue) => { try { const updateData = {}; const targetField = issue.field || (/[؀-ۿ]/.test(issue.suggestion) ? 'arabic' : 'spanish'); updateData[targetField] = issue.suggestion; await supabase.from('flashcards').update(updateData).eq('id', issue.id); setAuditResults(prev => prev.filter(p => p.id !== issue.id)); setCards(prev => prev.map(c => c.id === issue.id ? { ...c, ...updateData } : c)); } catch (e) { alert("Error: " + e.message); } };
+    const applyFix = async (issue) => { try { const updateData = {}; const targetField = issue.field || (/[؀-ۿ]/.test(issue.suggestion) ? 'arabic' : 'spanish'); updateData[targetField] = issue.suggestion; const { error } = await supabase.from('flashcards').update(updateData).eq('id', issue.id); if (error) throw error; setAuditResults(prev => prev.filter(p => p.id !== issue.id)); setCards(prev => prev.map(c => c.id === issue.id ? { ...c, ...updateData } : c)); } catch (e) { alert("Error: " + e.message); } };
     return (
-        <div className="flex flex-col h-full max-w-4xl mx-auto w-full"><div className="bg-purple-50 border border-purple-200 rounded-xl p-6 mb-6 shadow-sm"><div className="flex gap-4 items-end"><div className="flex-1"><label className="block text-xs font-bold text-purple-800 uppercase mb-2">OpenAI API Key</label><input type="password" placeholder="sk-..." className="w-full p-3 border rounded-lg" value={apiKey} onChange={(e) => { setApiKey(e.target.value); localStorage.setItem('openai_key', e.target.value); }} /></div><button onClick={handleAudit} disabled={loading || !apiKey} className="px-8 py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2">{loading ? <Loader className="animate-spin" /> : "Auditar"}</button></div>{logs.length > 0 && <div className="mt-4 bg-slate-900 text-green-400 font-mono text-xs p-4 rounded-lg h-24 overflow-y-auto">{logs.map((l, i) => <div key={i}>{l}</div>)}</div>}</div><div className="flex-1 overflow-y-auto space-y-4 pb-20">{auditResults.map(issue => { const original = cards.find(c => c.id === issue.id); if (!original) return null; const fieldToFix = issue.field || (/[؀-ۿ]/.test(issue.suggestion) ? 'arabic' : 'spanish'); const isArabic = fieldToFix === 'arabic'; const originalText = isArabic ? original.arabic : original.spanish; return ( <div key={issue.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200"><div className="flex justify-between items-center mb-4"><span className="text-xs font-mono font-bold text-slate-600 bg-slate-100 px-3 py-1 rounded-full">ID: {original.id} | Corrigiendo: {fieldToFix.toUpperCase()}</span></div><div className="grid grid-cols-2 gap-6 mb-4"><div className="bg-red-50 p-4 rounded text-center border border-red-100 flex flex-col justify-center"><p className="text-xs text-red-500 font-bold mb-3 uppercase">Original</p><p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold text-slate-700'}`} dir={isArabic ? "rtl" : "ltr"}>{originalText || "(vacío)"}</p></div><div className="bg-green-50 p-4 rounded text-center border border-green-200 flex flex-col justify-center"><p className="text-xs text-green-600 font-bold mb-3 uppercase">Sugerencia IA</p><p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold'} text-green-800`} dir={isArabic ? "rtl" : "ltr"}>{issue.suggestion}</p><p className="text-xs text-green-700 mt-3 italic bg-green-100 px-2 py-1 rounded inline-block self-center">{issue.problem}</p></div></div><button onClick={() => applyFix(issue)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex justify-center items-center gap-2 hover:bg-green-700 transition-colors"><Check className="w-5 h-5"/> Aplicar Corrección</button></div> ); })}{!loading && logs.length > 0 && auditResults.length === 0 && <div className="text-center text-slate-500 py-10 font-bold">¡Auditoría finalizada! Todo correcto.</div>}</div></div>
+        <div className="flex flex-col h-full max-w-4xl mx-auto w-full"><div className="bg-purple-50 border border-purple-200 rounded-xl p-6 mb-6 shadow-sm"><div className="flex gap-4 items-center justify-between"><p className="text-sm text-purple-800">Revisa las primeras 150 tarjetas con la IA del servidor (no necesita clave).</p><button onClick={handleAudit} disabled={loading} className="px-8 py-3 bg-purple-600 text-white rounded-lg font-bold hover:bg-purple-700 disabled:opacity-50 flex items-center gap-2 shrink-0">{loading ? <Loader className="animate-spin" /> : "Auditar"}</button></div>{logs.length > 0 && <div className="mt-4 bg-slate-900 text-green-400 font-mono text-xs p-4 rounded-lg h-24 overflow-y-auto">{logs.map((l, i) => <div key={i}>{l}</div>)}</div>}</div><div className="flex-1 overflow-y-auto space-y-4 pb-20">{auditResults.map(issue => { const original = cards.find(c => c.id === issue.id); if (!original) return null; const fieldToFix = issue.field || (/[؀-ۿ]/.test(issue.suggestion) ? 'arabic' : 'spanish'); const isArabic = fieldToFix === 'arabic'; const originalText = isArabic ? original.arabic : original.spanish; return ( <div key={issue.id} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200"><div className="flex justify-between items-center mb-4"><span className="text-xs font-mono font-bold text-slate-600 bg-slate-100 px-3 py-1 rounded-full">ID: {original.id} | Corrigiendo: {fieldToFix.toUpperCase()}</span></div><div className="grid grid-cols-2 gap-6 mb-4"><div className="bg-red-50 p-4 rounded text-center border border-red-100 flex flex-col justify-center"><p className="text-xs text-red-500 font-bold mb-3 uppercase">Original</p><p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold text-slate-700'}`} dir={isArabic ? "rtl" : "ltr"}>{originalText || "(vacío)"}</p></div><div className="bg-green-50 p-4 rounded text-center border border-green-200 flex flex-col justify-center"><p className="text-xs text-green-600 font-bold mb-3 uppercase">Sugerencia IA</p><p className={`${isArabic ? 'font-arabic text-2xl' : 'text-xl font-bold'} text-green-800`} dir={isArabic ? "rtl" : "ltr"}>{issue.suggestion}</p><p className="text-xs text-green-700 mt-3 italic bg-green-100 px-2 py-1 rounded inline-block self-center">{issue.problem}</p></div></div><button onClick={() => applyFix(issue)} className="w-full bg-green-600 text-white py-3 rounded-lg font-bold flex justify-center items-center gap-2 hover:bg-green-700 transition-colors"><Check className="w-5 h-5"/> Aplicar Corrección</button></div> ); })}{!loading && logs.length > 0 && auditResults.length === 0 && <div className="text-center text-slate-500 py-10 font-bold">¡Auditoría finalizada! Todo correcto.</div>}</div></div>
+    );
+}
+
+// Sugerir familias nuevas (solo informativo): llama a la Edge Function
+// sugerir-familias, que agrupa las tarjetas de confianza baja. No escribe nada.
+function FamilySuggester() {
+    const [loading, setLoading] = useState(false);
+    const [grupos, setGrupos] = useState(null);
+    const [error, setError] = useState("");
+    const handleSuggest = async () => {
+        setLoading(true); setError(""); setGrupos(null);
+        try {
+            const data = await callEdgeFunction('sugerir-familias', { min: 10 });
+            setGrupos(Array.isArray(data?.grupos) ? data.grupos : []);
+        } catch (e) { setError(e.message); } finally { setLoading(false); }
+    };
+    return (
+        <div className="flex flex-col h-full max-w-4xl mx-auto w-full">
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-6 mb-6 shadow-sm flex gap-4 items-center justify-between">
+                <p className="text-sm text-emerald-800">Agrupa por tema las tarjetas con confianza baja y propone posibles familias nuevas (con al menos 10 tarjetas). Solo informativo: no cambia nada en la base de datos.</p>
+                <button onClick={handleSuggest} disabled={loading} className="px-8 py-3 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2 shrink-0">{loading ? <Loader className="animate-spin" /> : "Sugerir"}</button>
+            </div>
+            {error && <div className="mb-4 bg-red-50 border border-red-200 text-red-700 text-sm p-4 rounded-lg">❌ {error}</div>}
+            <div className="flex-1 overflow-y-auto space-y-4 pb-20">
+                {grupos && grupos.length === 0 && <div className="text-center text-slate-500 py-10 font-bold">No hay propuestas: ninguna agrupación alcanza el mínimo de tarjetas.</div>}
+                {grupos && grupos.map((g, i) => (
+                    <div key={i} className="bg-white p-5 rounded-xl shadow-sm border border-slate-200">
+                        <div className="flex justify-between items-center mb-2">
+                            <h3 className="font-bold text-slate-800">{g.nombre}</h3>
+                            <span className="text-xs font-mono font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full">{g.ids?.length || 0} tarjetas</span>
+                        </div>
+                        {g.descripcion && <p className="text-sm text-slate-500 mb-3">{g.descripcion}</p>}
+                        <div className="flex flex-wrap gap-1">
+                            {(g.ejemplos || []).map((ej, j) => <span key={j} className="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{ej}</span>)}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
     );
 }
 
@@ -528,14 +602,20 @@ function CardFormModal({ card, onSave, onClose }) {
     phonetic: card?.phonetic || '',
   }));
   const [familias, setFamilias] = useState(() => getCardFamilias(card));
+  const [tipo, setTipo] = useState(() => card?.tipo || 'palabra'); // 'palabra' | 'frase'
+  const [clase, setClase] = useState(() => card?.clase_palabra || '');
 
   const toggleFamilia = (familia) => {
     setFamilias(prev => prev.includes(familia) ? prev.filter(f => f !== familia) : [...prev, familia]);
   };
 
+  // Las frases no llevan clase de palabra.
+  const esFrase = tipo === 'frase';
+
   const handleSave = () => {
     if (!formData.spanish?.trim() || !formData.arabic?.trim()) { alert("Español y árabe son obligatorios."); return; }
-    onSave({ ...formData, familias });
+    const clase_palabra = esFrase ? null : (clase || null);
+    onSave({ ...formData, familias, tipo, clase_palabra });
   };
 
   return (
@@ -558,6 +638,22 @@ function CardFormModal({ card, onSave, onClose }) {
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label>
             <input type="text" className="w-full p-2 border rounded" value={formData.phonetic} onChange={e=>setFormData({...formData, phonetic: e.target.value})} />
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label>
+              <select className="w-full p-2 border rounded text-sm bg-white" value={tipo} onChange={e => setTipo(e.target.value)}>
+                <option value="palabra">Palabra</option>
+                <option value="frase">Frase</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Clase de palabra</label>
+              <select className="w-full p-2 border rounded text-sm bg-white disabled:bg-slate-100 disabled:text-slate-400" value={esFrase ? '' : clase} onChange={e => setClase(e.target.value)} disabled={esFrase} title={esFrase ? 'Las frases no llevan clase de palabra' : undefined}>
+                <option value="">{CLASE_NINGUNA}</option>
+                {CLASES_PALABRA.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Familias temáticas</label>
             <div className="grid grid-cols-1 gap-1.5 max-h-56 overflow-y-auto border border-slate-200 rounded-lg p-2">
@@ -577,16 +673,295 @@ function CardFormModal({ card, onSave, onClose }) {
   );
 }
 
-function SmartImportModal({ onClose, onImport }) {
-  const [activeTab, setActiveTab] = useState('text'); const [text, setText] = useState(""); const [isProcessing, setIsProcessing] = useState(false); const [cameraStream, setCameraStream] = useState(null); const [apiKey, setApiKey] = useState(localStorage.getItem('openai_key') || ""); const videoRef = useRef(null);
+// Límites de entrada (coinciden con los validados por la Edge Function importar).
+const MAX_TEXTO_IMPORT = 20000;        // caracteres
+const MAX_IMAGEN_BASE64 = 5 * 1024 * 1024; // ~5 MB de cadena base64
+
+// Clave de deduplicación: normaliza el árabe (misma función que el servidor) e
+// ignora el artículo inicial "ال" para no tratar "el libro" y "libro" como distintos.
+function dupKey(arabe) {
+  const n = normalizarArabe(arabe || "");
+  return n.replace(/^ال/, "").trim();
+}
+
+function SmartImportModal({ onClose, existingCards = [], onSaved }) {
+  const [activeTab, setActiveTab] = useState('text');
+  const [text, setText] = useState("");
+  const [leccion, setLeccion] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [rows, setRows] = useState(null); // null = aún no hay revisión; [] = sin resultados
+  const [cameraStream, setCameraStream] = useState(null);
+  const videoRef = useRef(null);
+
   useEffect(() => { return () => { if (cameraStream) cameraStream.getTracks().forEach(t => t.stop()); }; }, [cameraStream]);
-  const startCamera = async () => { try { const stream = await navigator.mediaDevices.getUserMedia({ video: true }); setCameraStream(stream); if (videoRef.current) videoRef.current.srcObject = stream; } catch (e) { alert("Error cámara"); } };
-  const capture = () => { if (!videoRef.current) return; const canvas = document.createElement('canvas'); canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight; canvas.getContext('2d').drawImage(videoRef.current, 0, 0); processImage(canvas.toDataURL('image/jpeg')); };
-  const processImage = async (base64) => { if (!apiKey) { alert("Requiere API Key"); return; } setIsProcessing(true); try { const OpenAI = await loadOpenAI(); const openai = new OpenAI({ apiKey, dangerouslyAllowBrowser: true }); const res = await openai.chat.completions.create({ model: "gpt-4o", messages: [{ role: "user", content: [{ type: "text", text: "Extract flashcards JSON: [{category, spanish, arabic, phonetic}]" }, { type: "image_url", image_url: { url: base64 } }] }] }); onImport(JSON.parse(res.choices[0].message.content.match(/\[.*\]/s)[0])); } catch (e) { alert(e.message); } finally { setIsProcessing(false); } };
-  const processText = () => { try { const lines = text.split('\n').filter(l=>l.trim()); const newCards = lines.map(line => { const parts = line.split('|'); if (parts.length >= 3) { return { category: parts[0]?.trim() || 'General', spanish: parts[1]?.trim(), arabic: parts[2]?.trim(), phonetic: parts[3]?.trim() || '' }; } return { category: 'Importado', spanish: parts[0]?.trim(), arabic: parts[1]?.trim(), phonetic: parts[2]?.trim() || '' }; }).filter(c => c.spanish && c.arabic); if (newCards.length === 0) { alert("No se encontraron líneas válidas."); return; } onImport(newCards); } catch(e) { alert("Formato incorrecto"); } };
-  const handleFile = async (e) => { const file = e.target.files[0]; if (!file) return; if (file.type.includes('pdf')) { setIsProcessing(true); try { const pdfjsLib = await loadPdfjs(); const ab = await file.arrayBuffer(); const pdf = await pdfjsLib.getDocument(ab).promise; let str = ""; for(let i=1; i<=pdf.numPages; i++) { const p = await pdf.getPage(i); const t = await p.getTextContent(); str += t.items.map(s=>s.str).join(" ") + "\n"; } setText(str); setActiveTab('text'); } catch(e) { alert("Error PDF"); } finally { setIsProcessing(false); } } else { const reader = new FileReader(); reader.onload = () => processImage(reader.result); reader.readAsDataURL(file); } };
+
+  // Índice de árabes existentes por clave de deduplicación.
+  const existentesPorClave = useMemo(() => {
+    const map = new Map();
+    for (const c of existingCards) {
+      if (!c.arabic) continue;
+      const key = dupKey(c.arabic);
+      if (key && !map.has(key)) map.set(key, c);
+    }
+    return map;
+  }, [existingCards]);
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      setCameraStream(stream);
+      if (videoRef.current) videoRef.current.srcObject = stream;
+    } catch { setError("No se pudo acceder a la cámara."); }
+  };
+
+  // Convierte los items devueltos por `importar` en filas editables de revisión.
+  const buildRows = (items) => items.map((it, idx) => {
+    const key = dupKey(it.arabe);
+    const match = key ? existentesPorClave.get(key) : null;
+    return {
+      _id: idx,
+      arabe: it.arabe || "",
+      espanol: it.espanol || "",
+      transliteracion: it.transliteracion || "",
+      tipo: it.tipo === 'frase' ? 'frase' : 'palabra',
+      clase_palabra: it.clase_palabra || "",
+      familias: Array.isArray(it.familias) ? it.familias : [],
+      confianza: it.confianza || 'media',
+      estado: match ? 'existe' : 'nuevo',
+      match: match || null,
+      accion: match ? 'omitir' : 'crear', // para 'existe': 'omitir' | 'fusionar'
+      descartada: false,
+      editada: false,
+    };
+  });
+
+  const llamarImportar = async (modo, contenido) => {
+    setError(""); setIsProcessing(true);
+    try {
+      const data = await callEdgeFunction('importar', { modo, contenido, leccion: leccion.trim() || undefined });
+      const items = Array.isArray(data?.items) ? data.items : [];
+      if (items.length === 0) { setError("La IA no devolvió ningún elemento."); return; }
+      setRows(buildRows(items));
+    } catch (e) { setError(e.message); } finally { setIsProcessing(false); }
+  };
+
+  const processText = () => {
+    const contenido = text.trim();
+    if (!contenido) { setError("Pega algo de texto primero."); return; }
+    if (contenido.length > MAX_TEXTO_IMPORT) { setError(`Texto demasiado largo (máx. ${MAX_TEXTO_IMPORT} caracteres).`); return; }
+    llamarImportar('texto', contenido);
+  };
+
+  const processImage = (base64) => {
+    if (!base64) return;
+    if (base64.length > MAX_IMAGEN_BASE64) { setError("Imagen demasiado grande (máx. ~5 MB)."); return; }
+    llamarImportar('imagen', base64);
+  };
+
+  const capture = () => {
+    if (!videoRef.current) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = videoRef.current.videoWidth; canvas.height = videoRef.current.videoHeight;
+    canvas.getContext('2d').drawImage(videoRef.current, 0, 0);
+    processImage(canvas.toDataURL('image/jpeg'));
+  };
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    if (file.type.includes('pdf')) {
+      setIsProcessing(true); setError("");
+      try {
+        const pdfjsLib = await loadPdfjs();
+        const ab = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument(ab).promise;
+        let str = "";
+        for (let i = 1; i <= pdf.numPages; i++) { const p = await pdf.getPage(i); const t = await p.getTextContent(); str += t.items.map(s => s.str).join(" ") + "\n"; }
+        setText(str); setActiveTab('text');
+      } catch { setError("No se pudo leer el PDF."); } finally { setIsProcessing(false); }
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => processImage(reader.result);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // --- Edición de filas de revisión ---
+  const patchRow = (id, patch) => setRows(prev => prev.map(r => r._id === id ? { ...r, ...patch, editada: true } : r));
+  const toggleFamiliaRow = (id, familia) => setRows(prev => prev.map(r => {
+    if (r._id !== id) return r;
+    const familias = r.familias.includes(familia) ? r.familias.filter(f => f !== familia) : [...r.familias, familia];
+    return { ...r, familias, editada: true };
+  }));
+
+  const guardar = async () => {
+    setSaving(true); setError("");
+    try {
+      const activas = rows.filter(r => !r.descartada && !(r.estado === 'existe' && r.accion === 'omitir'));
+      const nuevas = [];
+      const fusiones = [];
+      for (const r of activas) {
+        const clase_palabra = r.tipo === 'frase' ? null : (r.clase_palabra || null);
+        if (r.estado === 'existe' && r.accion === 'fusionar' && r.match) {
+          const familiasUnion = [...new Set([...(r.match.familias || []), ...r.familias])];
+          const patch = { familias: familiasUnion };
+          if (leccion.trim()) patch.category = leccion.trim();
+          if (!r.match.clase_palabra && clase_palabra) patch.clase_palabra = clase_palabra;
+          if (!r.match.tipo) patch.tipo = r.tipo;
+          fusiones.push({ id: r.match.id, patch });
+        } else {
+          nuevas.push({
+            category: leccion.trim() || 'Importado',
+            spanish: r.espanol,
+            arabic: r.arabe,
+            phonetic: r.transliteracion,
+            tipo: r.tipo,
+            clase_palabra,
+            familias: r.familias,
+            // Fila editada/confirmada por el admin -> alta; si no, conserva la de la IA.
+            familias_confianza: r.editada ? 'alta' : r.confianza,
+          });
+        }
+      }
+      if (nuevas.length) { const { error: insErr } = await supabase.from('flashcards').insert(nuevas); if (insErr) throw insErr; }
+      for (const f of fusiones) { const { error: updErr } = await supabase.from('flashcards').update(f.patch).eq('id', f.id); if (updErr) throw updErr; }
+      alert(`Guardado: ${nuevas.length} nuevas, ${fusiones.length} fusionadas.`);
+      if (onSaved) await onSaved();
+      onClose();
+    } catch (e) { setError("Error al guardar: " + e.message); } finally { setSaving(false); }
+  };
+
+  const resumen = rows ? {
+    total: rows.length,
+    nuevas: rows.filter(r => !r.descartada && r.estado === 'nuevo').length,
+    existentes: rows.filter(r => r.estado === 'existe').length,
+    descartadas: rows.filter(r => r.descartada).length,
+  } : null;
+
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"><div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]"><div className="bg-purple-600 p-4 text-white flex justify-between items-center"><h2 className="font-bold">Importar</h2><button onClick={onClose}><X className="w-5 h-5"/></button></div><div className="flex border-b"><button onClick={()=>setActiveTab('text')} className={`flex-1 py-3 font-bold ${activeTab==='text'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Texto</button><button onClick={()=>setActiveTab('file')} className={`flex-1 py-3 font-bold ${activeTab==='file'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Archivo</button><button onClick={()=>{setActiveTab('camera'); startCamera();}} className={`flex-1 py-3 font-bold ${activeTab==='camera'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Cámara</button></div><div className="p-6 overflow-y-auto"><input type="password" placeholder="API Key (Opcional para texto, Obligatoria para img)" className="w-full p-2 mb-4 border rounded text-xs" value={apiKey} onChange={e=>{setApiKey(e.target.value); localStorage.setItem('openai_key',e.target.value)}}/>{activeTab === 'text' && ( <><textarea className="w-full h-40 p-2 border rounded text-xs font-mono" value={text} onChange={e=>setText(e.target.value)} placeholder="Categoría | Español | Árabe | Fonética"></textarea><button onClick={processText} className="w-full mt-4 bg-purple-600 text-white py-2 rounded-lg font-bold">Procesar Texto</button></> )}{activeTab === 'file' && ( <div className="border-2 border-dashed border-slate-300 rounded-lg h-40 flex flex-col items-center justify-center text-slate-400 relative"><input type="file" accept=".pdf,image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFile}/>{isProcessing ? <Loader className="animate-spin"/> : <><Upload className="mb-2"/> <p>Subir PDF o Imagen</p></>}</div> )}{activeTab === 'camera' && ( <div className="flex flex-col items-center"><div className="w-full aspect-video bg-black rounded-lg overflow-hidden mb-4 relative"><video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video></div><button onClick={capture} disabled={isProcessing} className="bg-purple-600 text-white p-4 rounded-full shadow-lg hover:bg-purple-700 disabled:opacity-50">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <Camera className="w-6 h-6"/>}</button></div> )}</div></div></div>
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className={`bg-white rounded-2xl shadow-xl w-full ${rows ? 'max-w-5xl' : 'max-w-lg'} overflow-hidden flex flex-col max-h-[92vh]`}>
+        <div className="bg-purple-600 p-4 text-white flex justify-between items-center shrink-0">
+          <h2 className="font-bold">{rows ? 'Revisar importación' : 'Importar'}</h2>
+          <button onClick={onClose} aria-label="Cerrar"><X className="w-5 h-5"/></button>
+        </div>
+
+        {error && <div className="bg-red-50 border-b border-red-200 text-red-700 text-sm px-6 py-3">❌ {error}</div>}
+
+        {!rows ? (
+          <>
+            <div className="flex border-b shrink-0">
+              <button onClick={()=>setActiveTab('text')} className={`flex-1 py-3 font-bold ${activeTab==='text'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Texto</button>
+              <button onClick={()=>setActiveTab('file')} className={`flex-1 py-3 font-bold ${activeTab==='file'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Archivo</button>
+              <button onClick={()=>{setActiveTab('camera'); startCamera();}} className={`flex-1 py-3 font-bold ${activeTab==='camera'?'text-purple-600 border-b-2 border-purple-600':'text-slate-400'}`}>Cámara</button>
+            </div>
+            <div className="p-6 overflow-y-auto">
+              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Lección / origen (opcional)</label>
+              <input type="text" placeholder="Ej.: Pista 32: La ropa" className="w-full p-2 mb-4 border rounded text-sm" value={leccion} onChange={e=>setLeccion(e.target.value)} />
+              {activeTab === 'text' && (
+                <>
+                  <textarea className="w-full h-40 p-2 border rounded text-xs font-mono" value={text} onChange={e=>setText(e.target.value)} placeholder="Pega aquí el vocabulario (texto libre o 'español | árabe')."></textarea>
+                  <p className="text-[11px] text-slate-400 mt-1">{text.length}/{MAX_TEXTO_IMPORT} caracteres</p>
+                  <button onClick={processText} disabled={isProcessing} className="w-full mt-3 bg-purple-600 text-white py-2 rounded-lg font-bold disabled:opacity-50 flex items-center justify-center gap-2">{isProcessing ? <Loader className="animate-spin w-5 h-5"/> : 'Procesar texto'}</button>
+                </>
+              )}
+              {activeTab === 'file' && (
+                <div className="border-2 border-dashed border-slate-300 rounded-lg h-40 flex flex-col items-center justify-center text-slate-400 relative">
+                  <input type="file" accept=".pdf,image/*" className="absolute inset-0 opacity-0 cursor-pointer" onChange={handleFile}/>
+                  {isProcessing ? <Loader className="animate-spin"/> : <><Upload className="mb-2"/> <p>Subir PDF o imagen</p></>}
+                </div>
+              )}
+              {activeTab === 'camera' && (
+                <div className="flex flex-col items-center">
+                  <div className="w-full aspect-video bg-black rounded-lg overflow-hidden mb-4 relative"><video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover"></video></div>
+                  <button onClick={capture} disabled={isProcessing} className="bg-purple-600 text-white p-4 rounded-full shadow-lg hover:bg-purple-700 disabled:opacity-50">{isProcessing ? <Loader className="animate-spin w-6 h-6"/> : <Camera className="w-6 h-6"/>}</button>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="px-6 py-3 bg-slate-50 border-b text-xs font-bold text-slate-600 flex flex-wrap gap-x-6 gap-y-1 shrink-0">
+              <span>Total: {resumen.total}</span>
+              <span className="text-emerald-700">Nuevas: {resumen.nuevas}</span>
+              <span className="text-amber-700">Ya existen: {resumen.existentes}</span>
+              <span className="text-slate-400">Descartadas: {resumen.descartadas}</span>
+              {leccion.trim() && <span>Lección: {leccion.trim()}</span>}
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-100 text-slate-600 sticky top-0 z-10">
+                  <tr>
+                    <th className="p-2">Estado</th>
+                    <th className="p-2">Español</th>
+                    <th className="p-2 text-right">Árabe</th>
+                    <th className="p-2">Fonética</th>
+                    <th className="p-2">Tipo</th>
+                    <th className="p-2">Clase</th>
+                    <th className="p-2">Familias</th>
+                    <th className="p-2 text-center">Acción</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map(r => (
+                    <tr key={r._id} className={r.descartada ? 'opacity-40 bg-slate-50' : r.estado === 'existe' ? 'bg-amber-50/50' : 'hover:bg-slate-50'}>
+                      <td className="p-2">
+                        {r.estado === 'existe'
+                          ? <span className="text-amber-700 font-bold">Ya existe</span>
+                          : <span className="text-emerald-700 font-bold">Nueva</span>}
+                        {r.confianza === 'baja' && <span className="block text-[10px] text-rose-500">conf. baja</span>}
+                      </td>
+                      <td className="p-2"><input className="w-full p-1 border rounded" value={r.espanol} onChange={e=>patchRow(r._id, { espanol: e.target.value })} /></td>
+                      <td className="p-2"><input dir="rtl" className="w-full p-1 border rounded font-arabic text-right" value={r.arabe} onChange={e=>patchRow(r._id, { arabe: e.target.value })} /></td>
+                      <td className="p-2"><input className="w-full p-1 border rounded font-mono" value={r.transliteracion} onChange={e=>patchRow(r._id, { transliteracion: e.target.value })} /></td>
+                      <td className="p-2">
+                        <select className="w-full p-1 border rounded bg-white" value={r.tipo} onChange={e=>patchRow(r._id, { tipo: e.target.value, clase_palabra: e.target.value === 'frase' ? '' : r.clase_palabra })}>
+                          <option value="palabra">Palabra</option>
+                          <option value="frase">Frase</option>
+                        </select>
+                      </td>
+                      <td className="p-2">
+                        <select className="w-full p-1 border rounded bg-white disabled:bg-slate-100 disabled:text-slate-400" value={r.tipo === 'frase' ? '' : r.clase_palabra} disabled={r.tipo === 'frase'} onChange={e=>patchRow(r._id, { clase_palabra: e.target.value })}>
+                          <option value="">—</option>
+                          {CLASES_PALABRA.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </td>
+                      <td className="p-2">
+                        <details>
+                          <summary className="cursor-pointer text-purple-700">{r.familias.length} familia(s)</summary>
+                          <div className="mt-1 max-h-40 overflow-y-auto border rounded p-1 bg-white">
+                            {FAMILIAS_A2.map(f => (
+                              <label key={f} className="flex items-center gap-1 px-1 py-0.5 hover:bg-slate-50 rounded cursor-pointer">
+                                <input type="checkbox" className="accent-emerald-600" checked={r.familias.includes(f)} onChange={()=>toggleFamiliaRow(r._id, f)} />
+                                <span>{f}</span>
+                              </label>
+                            ))}
+                          </div>
+                        </details>
+                      </td>
+                      <td className="p-2 text-center whitespace-nowrap">
+                        {r.estado === 'existe' && !r.descartada && (
+                          <select className="p-1 border rounded bg-white mb-1" value={r.accion} onChange={e=>setRows(prev => prev.map(x => x._id === r._id ? { ...x, accion: e.target.value } : x))}>
+                            <option value="omitir">Omitir</option>
+                            <option value="fusionar">Fusionar</option>
+                          </select>
+                        )}
+                        <button onClick={()=>setRows(prev => prev.map(x => x._id === r._id ? { ...x, descartada: !x.descartada } : x))} className={`block w-full text-[11px] font-bold px-2 py-1 rounded ${r.descartada ? 'bg-slate-200 text-slate-600' : 'bg-rose-100 text-rose-700'}`}>{r.descartada ? 'Restaurar' : 'Descartar'}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-4 border-t bg-slate-50 flex justify-between items-center shrink-0">
+              <button onClick={()=>{ setRows(null); setError(""); }} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg">← Volver</button>
+              <button onClick={guardar} disabled={saving} className="px-8 py-2 bg-emerald-600 text-white rounded-lg font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2">{saving ? <Loader className="animate-spin w-5 h-5"/> : <Check className="w-5 h-5"/>} Guardar</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -594,9 +969,9 @@ function Flashcard({ data, frontLanguage, showDiacritics, isAdmin, onDelete, onE
   const [flipState, setFlipState] = useState(0); useEffect(() => { setFlipState(0); }, [frontLanguage]);
   const handleNextFace = () => { if (!isAdmin) setFlipState((prev) => (prev + 1) % 3); };
   const playAudio = (e) => { e.stopPropagation(); playSmartAudio(data?.arabic || ""); };
-  const spanishText = data?.spanish || "Sin texto"; const arabicText = data?.arabic || "Sin texto"; const phoneticText = data?.phonetic || "N/A"; const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText); const familias = getCardFamilias(data);
+  const spanishText = data?.spanish || "Sin texto"; const arabicText = data?.arabic || "Sin texto"; const phoneticText = data?.phonetic || "N/A"; const displayArabic = showDiacritics ? arabicText : removeArabicDiacritics(arabicText); const familias = getCardFamilias(data); const clasePalabra = data?.clase_palabra || null;
   let content = null;
   if (isAdmin) { content = <><h3 className="text-lg font-bold text-slate-800 line-clamp-2">{spanishText}</h3><h3 className="text-2xl font-arabic text-emerald-700 mt-1" dir="rtl">{displayArabic}</h3><p className="text-sm font-mono text-amber-700 italic opacity-80">{phoneticText}</p></>; } else if (flipState === 2) { content = <><p className="text-xs uppercase text-amber-600 font-bold mb-2">Fonética</p><h3 className="text-lg font-mono text-amber-800 italic">{phoneticText}</h3></>; } else { const isFront = flipState === 0; const currentLang = isFront ? frontLanguage : (frontLanguage === 'spanish' ? 'arabic' : 'spanish'); if (currentLang === 'spanish') { content = <><p className="text-xs uppercase text-slate-400 font-bold mb-2">Español</p><h3 className="text-xl font-bold text-slate-800">{spanishText}</h3></>; } else { content = <><p className="text-xs uppercase text-emerald-600 font-bold mb-2">Árabe</p><h3 className="text-3xl font-arabic text-emerald-900 mb-4" dir="rtl">{displayArabic}</h3><button onClick={playAudio} className="p-2 bg-emerald-200 text-emerald-800 rounded-full hover:bg-emerald-300 transition-colors"><Volume2 className="w-4 h-4"/></button></>; } }
   let bgClass = "bg-white border-slate-200 text-slate-800"; if (!isAdmin) { if (flipState === 0) bgClass = "bg-orange-50 border-orange-100 text-slate-800"; if (flipState === 1) bgClass = "bg-emerald-50 border-emerald-200 text-emerald-900"; if (flipState === 2) bgClass = "bg-amber-100 border-amber-200 text-amber-900"; }
-  return ( <div onClick={handleNextFace} className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}>{isAdmin && ( <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}><button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button><button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button></div> )}<div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">{content}</div><div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">{familias.length > 0 ? familias.map((familia, i) => (<span key={i} className="text-[10px] font-bold tracking-wide bg-emerald-600/10 text-emerald-700 px-2 py-0.5 rounded-full whitespace-nowrap">{familia}</span>)) : (<span className="text-[10px] font-bold tracking-wide bg-slate-200 text-slate-400 px-2 py-0.5 rounded-full">Sin familia</span>)}</div></div> );
+  return ( <div onClick={handleNextFace} className={`relative h-60 w-full rounded-2xl shadow-sm hover:shadow-lg transition-all border flex flex-col p-4 text-center select-none group cursor-pointer ${bgClass}`}>{isAdmin && ( <div className="absolute top-2 right-2 flex gap-2 z-10" onClick={(e) => e.stopPropagation()}><button onClick={() => onEdit()} className="p-2 bg-blue-100 text-blue-600 rounded-full hover:bg-blue-200 transition-colors"><Edit2 className="w-4 h-4" /></button><button onClick={() => onDelete()} className="p-2 bg-red-100 text-red-600 rounded-full hover:bg-red-200 transition-colors"><Trash2 className="w-4 h-4" /></button></div> )}<div className="flex-1 flex flex-col items-center justify-center w-full gap-2 mt-4">{content}</div><div className="mt-auto pt-2 pb-1 flex flex-wrap gap-1 justify-center max-h-12 overflow-hidden">{clasePalabra && (<span className="text-[10px] font-bold tracking-wide bg-indigo-600/10 text-indigo-700 px-2 py-0.5 rounded-full whitespace-nowrap">{clasePalabra}</span>)}{familias.length > 0 ? familias.map((familia, i) => (<span key={i} className="text-[10px] font-bold tracking-wide bg-emerald-600/10 text-emerald-700 px-2 py-0.5 rounded-full whitespace-nowrap">{familia}</span>)) : (<span className="text-[10px] font-bold tracking-wide bg-slate-200 text-slate-400 px-2 py-0.5 rounded-full">Sin familia</span>)}</div></div> );
 }
