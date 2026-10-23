@@ -333,6 +333,17 @@ export default function App() {
     return ['Todas', ...CLASES_PALABRA.filter(c => present.has(c))];
   }, [cards]);
 
+  // Tipo "frase" oculta el filtro de clase y lo reinicia (las frases no tienen clase).
+  const handleTipoChange = (value) => {
+    setSelectedTipo(value);
+    if (value === 'frase') setSelectedClase('Todas');
+  };
+  // Elegir una clase concreta implica Tipo = "palabra" (solo las palabras tienen clase).
+  const handleClaseChange = (value) => {
+    setSelectedClase(value);
+    if (value !== 'Todas') setSelectedTipo('palabra');
+  };
+
   const filteredCards = useMemo(() => {
     const normalizedTerm = normalizeForSearch(searchTerm);
     const pendientes = selectedFamilia === PENDIENTES_REVISAR;
@@ -377,15 +388,15 @@ export default function App() {
                 </select>
             </div>
             <div className="relative md:w-36">
-                <select value={selectedTipo} onChange={(e) => setSelectedTipo(e.target.value)} className="w-full px-3 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer" aria-label="Filtrar por tipo">
+                <select value={selectedTipo} onChange={(e) => handleTipoChange(e.target.value)} className="w-full px-3 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer" aria-label="Filtrar por tipo">
                     <option value="Todos" className="text-slate-800 bg-white">Tipo: todos</option>
                     <option value="palabra" className="text-slate-800 bg-white">Palabras</option>
                     <option value="frase" className="text-slate-800 bg-white">Frases</option>
                 </select>
             </div>
-            {claseOptions.length > 1 && (
+            {claseOptions.length > 1 && selectedTipo !== 'frase' && (
               <div className="relative md:w-44">
-                  <select value={selectedClase} onChange={(e) => setSelectedClase(e.target.value)} className="w-full px-3 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer" aria-label="Filtrar por clase de palabra">
+                  <select value={selectedClase} onChange={(e) => handleClaseChange(e.target.value)} className="w-full px-3 pr-8 py-2 bg-black/20 border border-white/10 rounded-lg text-sm text-white appearance-none cursor-pointer" aria-label="Filtrar por clase de palabra">
                       {claseOptions.map(c => <option key={c} value={c} className="text-slate-800 bg-white">{c === 'Todas' ? 'Clase: todas' : c}</option>)}
                   </select>
               </div>
@@ -638,21 +649,23 @@ function CardFormModal({ card, onSave, onClose }) {
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Fonética</label>
             <input type="text" className="w-full p-2 border rounded" value={formData.phonetic} onChange={e=>setFormData({...formData, phonetic: e.target.value})} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className={`grid gap-3 ${esFrase ? 'grid-cols-1' : 'grid-cols-2'}`}>
             <div>
               <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label>
-              <select className="w-full p-2 border rounded text-sm bg-white" value={tipo} onChange={e => setTipo(e.target.value)}>
+              <select className="w-full p-2 border rounded text-sm bg-white" value={tipo} onChange={e => { const v = e.target.value; setTipo(v); if (v === 'frase') setClase(''); }}>
                 <option value="palabra">Palabra</option>
                 <option value="frase">Frase</option>
               </select>
             </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Clase de palabra</label>
-              <select className="w-full p-2 border rounded text-sm bg-white disabled:bg-slate-100 disabled:text-slate-400" value={esFrase ? '' : clase} onChange={e => setClase(e.target.value)} disabled={esFrase} title={esFrase ? 'Las frases no llevan clase de palabra' : undefined}>
-                <option value="">{CLASE_NINGUNA}</option>
-                {CLASES_PALABRA.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
+            {!esFrase && (
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Clase de palabra</label>
+                <select className="w-full p-2 border rounded text-sm bg-white" value={clase} onChange={e => setClase(e.target.value)}>
+                  <option value="">{CLASE_NINGUNA}</option>
+                  {CLASES_PALABRA.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
           </div>
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Familias temáticas</label>
@@ -922,10 +935,14 @@ function SmartImportModal({ onClose, existingCards = [], onSaved }) {
                         </select>
                       </td>
                       <td className="p-2">
-                        <select className="w-full p-1 border rounded bg-white disabled:bg-slate-100 disabled:text-slate-400" value={r.tipo === 'frase' ? '' : r.clase_palabra} disabled={r.tipo === 'frase'} onChange={e=>patchRow(r._id, { clase_palabra: e.target.value })}>
-                          <option value="">—</option>
-                          {CLASES_PALABRA.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
+                        {r.tipo === 'frase' ? (
+                          <span className="text-slate-300" title="Las frases no llevan clase de palabra">—</span>
+                        ) : (
+                          <select className="w-full p-1 border rounded bg-white" value={r.clase_palabra} onChange={e=>patchRow(r._id, { clase_palabra: e.target.value })}>
+                            <option value="">—</option>
+                            {CLASES_PALABRA.map(c => <option key={c} value={c}>{c}</option>)}
+                          </select>
+                        )}
                       </td>
                       <td className="p-2">
                         <details>
